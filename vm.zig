@@ -4,6 +4,7 @@ const Chunk = @import("chunk.zig").Chunk;
 const OpCode = @import("chunk.zig").OpCode;
 const Value = @import("value.zig").Value;
 const common = @import("common.zig");
+const compiler = @import("compiler.zig");
 
 const MAX_FRAMES = 64;
 const STACK_MAX = 64 * 256;
@@ -40,10 +41,13 @@ pub const VM = struct {
         vm.reset_stack();
     }
 
-    pub fn interpret(self: *VM, chunk: *Chunk) InterpretError!void {
-        self.chunk = chunk;
-        self.ip = chunk.code.items.ptr;
-        return self.run();
+    pub fn free(vm: *VM) void {
+        _ = vm;
+    }
+
+    pub fn interpret(self: *VM, source: []const u8) InterpretError!void {
+        _ = self;
+        compiler.compile(source);
     }
 
     fn run(self: *VM) InterpretError!void {
