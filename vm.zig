@@ -22,6 +22,15 @@ pub const VM = struct {
         self.stack_top = &self.stack;
     }
 
+    fn runtime_error(self: *VM, comptime fmt: []const u8, args: anytype) void {
+        std.debug.print(fmt, args);
+        std.debug.print("\n", .{});
+        const instruction = @ptrToInt(self.ip) - @ptrToInt(self.chunk.code.items.ptr) - 1;
+        const line = self.chunk.lines.items[instruction];
+        std.debug.print("[line {}] in script\n", .{line});
+        self.reset_stack();
+    }
+
     fn push(self: *VM, value: Value) void {
         self.stack_top[0] = value;
         self.stack_top += 1;
@@ -82,9 +91,9 @@ pub const VM = struct {
                     const constant = self.read_constant();
                     self.push(constant);
                 },
-                .OP_NIL => unreachable,
-                .OP_TRUE => unreachable,
-                .OP_FALSE => unreachable,
+                .OP_NIL => self.push(Value.nil()),
+                .OP_TRUE => self.push(Value.boolean(true)),
+                .OP_FALSE => self.push(Value.boolean(false)),
                 .OP_POP => unreachable,
                 .OP_GET_LOCAL => unreachable,
                 .OP_SET_LOCAL => unreachable,
@@ -96,19 +105,27 @@ pub const VM = struct {
                 .OP_SET_PROPERTY => unreachable,
                 .OP_GET_PROPERTY => unreachable,
                 .OP_GET_SUPER => unreachable,
-                .OP_EQUAL => unreachable,
-                .OP_GREATER => unreachable,
-                .OP_LESS => unreachable,
-                .OP_ADD => {
-                    self.binary_op(.OP_ADD);
+                .OP_EQUAL => {
+                    const b = self.pop();
+                    const a = self.pop();
+                    self.push(Value.boolean(a.values_equal(b)));
                 },
-                .OP_SUBTRACT, .OP_MULTIPLY, .OP_DIVIDE => {
-                    self.binary_op(instruction);
-                },
-                .OP_NOT => unreachable,
+                .OP_GREATER => try self.binary_op(.OP_GREATER),
+                .OP_LESS => try self.binary_op(.OP_LESS),
+                .OP_ADD => try self.binary_op(.OP_ADD),
+                .OP_SUBTRACT => try self.binary_op(.OP_SUBTRACT),
+                .OP_MULTIPLY => try self.binary_op(.OP_MULTIPLY),
+                .OP_DIVIDE => try self.binary_op(.OP_DIVIDE),
+                .OP_NOT => self.push(Value.boolean(self.pop().is_falsy())),
                 .OP_NEGATE => {
                     const ptr = self.stack_top - 1;
-                    ptr[0].Number = -ptr[0].Number;
+                    switch (ptr[0]) {
+                        .Number => ptr[0].Number = -ptr[0].Number,
+                        else => {
+                            self.runtime_error("Oprand must be a number.", .{});
+                            return error.RuntimeError;
+                        },
+                    }
                 },
                 .OP_PRINT => {
                     const value = self.pop();
@@ -146,20 +163,23 @@ pub const VM = struct {
         return self.chunk.values.items[self.read_byte()];
     }
 
-    inline fn binary_op(self: *VM, op: OpCode) void {
+    inline fn binary_op(self: *VM, comptime op: OpCode) InterpretError!void {
         if (self.peek(0) != Value.Number or self.peek(1) != Value.Number) {
-            unreachable;
+            self.runtime_error("Operands must be numbers.", .{});
+            return error.RuntimeError;
         }
         const b = self.pop().Number;
         const a = self.pop().Number;
 
         const result = switch (op) {
-            .OP_ADD => a + b,
-            .OP_SUBTRACT => a - b,
-            .OP_MULTIPLY => a * b,
-            .OP_DIVIDE => a / b,
+            .OP_ADD => Value.number(a + b),
+            .OP_SUBTRACT => Value.number(a - b),
+            .OP_MULTIPLY => Value.number(a * b),
+            .OP_DIVIDE => Value.number(a / b),
+            .OP_GREATER => Value.boolean(a > b),
+            .OP_LESS => Value.boolean(a < b),
             else => unreachable,
         };
-        self.push(Value.number(result));
+        self.push(result);
     }
 };

@@ -11,7 +11,9 @@ pub const Value = union(enum) {
 
     pub fn print(self: *const Value) void {
         switch (self.*) {
-            .Number => std.debug.print("{d}", .{self.Number}),
+            .Number => |n| std.debug.print("{d}", .{n}),
+            .Bool => |b| std.debug.print("{}", .{b}),
+            .Nil => std.debug.print("Nil", .{}),
             else => unreachable,
         }
     }
@@ -21,23 +23,26 @@ pub const Value = union(enum) {
     }
 
     pub inline fn nil() Value {
-        return .{.Nil};
+        return Value.Nil;
     }
 
     pub inline fn number(num: f64) Value {
         return .{ .Number = num };
     }
 
-    pub inline fn as_bool(self: Value) bool {
-        return self.Bool;
+    pub inline fn is_falsy(self: Value) bool {
+        return (self == .Nil or (self == Value.Bool and !self.Bool));
     }
 
-    pub inline fn as_nil(self: Value) void {
-        _ = self;
-        return;
-    }
+    pub inline fn values_equal(a: Value, b: Value) bool {
+        if (@enumToInt(a) != @enumToInt(b))
+            return false;
 
-    pub inline fn as_number(self: Value) f64 {
-        return self.Number;
+        return switch (a) {
+            .Number => a.Number == b.Number,
+            .Bool => a.Bool == b.Bool,
+            .Nil => true,
+            else => false,
+        };
     }
 };
