@@ -141,21 +141,12 @@ fn binary(can_assign: bool) void {
     parse_precedence(@intToEnum(Precedence, @enumToInt(rule.precedence) + 1));
 
     switch (token_type) {
-        .TOKEN_BANG_EQUAL => {
-            emit_op(.OP_EQUAL);
-            emit_op(.OP_NOT);
-        },
+        .TOKEN_BANG_EQUAL => emit_op(.OP_NOT_EQUAL),
         .TOKEN_EQUAL_EQUAL => emit_op(.OP_EQUAL),
         .TOKEN_GREATER => emit_op(.OP_GREATER),
-        .TOKEN_GREATER_EQUAL => {
-            emit_op(.OP_LESS);
-            emit_op(.OP_NOT);
-        },
+        .TOKEN_GREATER_EQUAL => emit_op(.OP_GREATER_EQUAL),
         .TOKEN_LESS => emit_op(.OP_LESS),
-        .TOKEN_LESS_EQUAL => {
-            emit_op(.OP_GREATER);
-            emit_op(.OP_NOT);
-        },
+        .TOKEN_LESS_EQUAL => emit_op(.OP_LESS_EQUAL),
         .TOKEN_PLUS => emit_op(.OP_ADD),
         .TOKEN_MINUS => emit_op(.OP_SUBTRACT),
         .TOKEN_STAR => emit_op(.OP_MULTIPLY),

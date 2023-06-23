@@ -110,8 +110,15 @@ pub const VM = struct {
                     const a = self.pop();
                     self.push(Value.boolean(a.values_equal(b)));
                 },
+                .OP_NOT_EQUAL => {
+                    const b = self.pop();
+                    const a = self.pop();
+                    self.push(Value.boolean(!a.values_equal(b)));
+                },
                 .OP_GREATER => try self.binary_op(.OP_GREATER),
+                .OP_GREATER_EQUAL => try self.binary_op(.OP_GREATER_EQUAL),
                 .OP_LESS => try self.binary_op(.OP_LESS),
+                .OP_LESS_EQUAL => try self.binary_op(.OP_LESS_EQUAL),
                 .OP_ADD => try self.binary_op(.OP_ADD),
                 .OP_SUBTRACT => try self.binary_op(.OP_SUBTRACT),
                 .OP_MULTIPLY => try self.binary_op(.OP_MULTIPLY),
@@ -177,7 +184,9 @@ pub const VM = struct {
             .OP_MULTIPLY => Value.number(a * b),
             .OP_DIVIDE => Value.number(a / b),
             .OP_GREATER => Value.boolean(a > b),
+            .OP_GREATER_EQUAL => Value.boolean(a >= b),
             .OP_LESS => Value.boolean(a < b),
+            .OP_LESS_EQUAL => Value.boolean(a <= b),
             else => unreachable,
         };
         self.push(result);
