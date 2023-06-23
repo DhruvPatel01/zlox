@@ -46,8 +46,15 @@ pub const VM = struct {
     }
 
     pub fn interpret(self: *VM, source: []const u8) InterpretError!void {
-        _ = self;
-        compiler.compile(source);
+        var chunk = Chunk.init();
+        defer chunk.free();
+
+        if (!compiler.compile(source, &chunk))
+            return error.CompileError;
+
+        self.chunk = &chunk;
+        self.ip = chunk.code.items.ptr;
+        return self.run();
     }
 
     fn run(self: *VM) InterpretError!void {

@@ -83,7 +83,7 @@ pub const Chunk = struct {
         try self.lines.append(line);
     }
 
-    pub fn write_u8(self: *Self, byte: u8, line: u32) void {
+    pub fn write_byte(self: *Self, byte: u8, line: u32) void {
         errdefer {
             exit(1);
         }
@@ -91,7 +91,7 @@ pub const Chunk = struct {
         try self.lines.append(line);
     }
 
-    pub fn write_const(self: *Self, value: Value) u8 {
+    pub fn add_const(self: *Self, value: Value) u8 {
         errdefer {
             exit(1);
         }

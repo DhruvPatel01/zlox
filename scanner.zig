@@ -52,24 +52,27 @@ pub const TokenType = enum {
 pub const Token = struct {
     type: TokenType,
     lexeme: []const u8,
-    line: usize,
+    line: u32,
 };
 
 pub const Scanner = struct {
     start: [*]const u8,
     current: [*]const u8,
     end: usize,
-    line: usize,
+    line: u32,
 
-    pub fn init(source: []const u8) Scanner {
-        return .{ .start = source.ptr, .current = source.ptr, .line = 1, .end = @ptrToInt(source.ptr + source.len) };
+    pub fn init(self: *Scanner, source: []const u8) void {
+        self.start = source.ptr;
+        self.current = source.ptr;
+        self.line = 1;
+        self.end = @ptrToInt(source.ptr + source.len);
     }
 
     inline fn is_at_end(self: *Scanner) bool {
         return @ptrToInt(self.current) >= self.end;
     }
 
-    inline fn advance(self: *Scanner) u8 {
+    pub inline fn advance(self: *Scanner) u8 {
         defer self.current += 1;
         return self.current[0];
     }
@@ -182,7 +185,7 @@ pub const Scanner = struct {
         while (is_digit(self.peek())) _ = self.advance();
         if (self.peek() == '.' and is_digit(self.peek_next())) {
             _ = self.advance();
-            while (!is_digit(self.peek())) _ = self.advance();
+            while (is_digit(self.peek())) _ = self.advance();
         }
         return self.make_token(.TOKEN_NUMBER);
     }
