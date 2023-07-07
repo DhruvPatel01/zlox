@@ -2,11 +2,11 @@ const std = @import("std");
 const Chunk = @import("chunk.zig").Chunk;
 const OpCode = @import("chunk.zig").OpCode;
 const Value = @import("value.zig").Value;
-const VM = @import("vm.zig").VM;
+const vm = @import("vm.zig");
 const common = @import("common.zig");
 const InterpreterError = @import("vm.zig").InterpretError;
 
-fn repl(vm: *VM) void {
+fn repl() void {
     const reader = std.io.getStdIn().reader();
 
     var buffer: [1024]u8 = undefined;
@@ -25,7 +25,7 @@ fn repl(vm: *VM) void {
     }
 }
 
-fn run_file(vm: *VM, path: [*:0]const u8) void {
+fn run_file(path: [*:0]const u8) void {
     const source_status = std.fs.cwd().readFileAlloc(common.allocator, std.mem.span(path), std.math.maxInt(u32));
     if (source_status) |source| {
         defer common.allocator.free(source);
@@ -45,13 +45,12 @@ fn run_file(vm: *VM, path: [*:0]const u8) void {
 }
 
 pub fn main() !void {
-    var vm = VM{};
     vm.init();
 
     const args = std.os.argv;
     switch (args.len) {
-        1 => repl(&vm),
-        2 => run_file(&vm, args[1]),
+        1 => repl(),
+        2 => run_file(args[1]),
         else => {
             std.debug.print("Usage: zlox [path]\n", .{});
             std.os.exit(64);
