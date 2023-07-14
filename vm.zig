@@ -51,9 +51,21 @@ fn peek(distance: usize) Value {
 
 pub fn init() void {
     reset_stack();
+    vm.objects = null;
 }
 
-pub fn free() void {}
+fn free_objects() void {
+    var obj = vm.objects;
+    while (obj != null) {
+        var next = obj.?.next;
+        obj.?.free_object();
+        obj = next;
+    }
+}
+
+pub fn free() void {
+    free_objects();
+}
 
 pub fn interpret(source: []const u8) InterpretError!void {
     var chunk = Chunk.init();

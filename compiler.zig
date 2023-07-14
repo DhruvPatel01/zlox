@@ -9,6 +9,7 @@ const Chunk = chunk_.Chunk;
 const OpCode = chunk_.OpCode;
 const value_ = @import("value.zig");
 const Value = value_.Value;
+const object_ = @import("object.zig");
 
 const Parser = struct {
     current: scanner_.Token,
@@ -174,6 +175,11 @@ fn number(_: bool) void {
     emit_constant(Value{ .Number = value });
 }
 
+fn string(_: bool) void {
+    const sub_obj = object_.ObjString.copy(parser.previous.lexeme[1 .. parser.previous.lexeme.len - 1]);
+    emit_constant(Value{ .Obj = &sub_obj.obj });
+}
+
 fn unary(_: bool) void {
     const token_type = parser.previous.type;
 
@@ -209,7 +215,7 @@ fn make_rules() [@typeInfo(TokenType).Enum.fields.len]ParseRule {
     arr_[@enumToInt(TokenType.TOKEN_LESS)] = ParseRule{ .infix = binary, .precedence = .PREC_COMPARISON };
     arr_[@enumToInt(TokenType.TOKEN_LESS_EQUAL)] = ParseRule{ .infix = binary, .precedence = .PREC_COMPARISON };
     arr_[@enumToInt(TokenType.TOKEN_IDENTIFIER)] = ParseRule{};
-    arr_[@enumToInt(TokenType.TOKEN_STRING)] = ParseRule{};
+    arr_[@enumToInt(TokenType.TOKEN_STRING)] = ParseRule{ .prefix = string };
     arr_[@enumToInt(TokenType.TOKEN_NUMBER)] = ParseRule{ .prefix = number };
     arr_[@enumToInt(TokenType.TOKEN_AND)] = ParseRule{};
     arr_[@enumToInt(TokenType.TOKEN_CLASS)] = ParseRule{};

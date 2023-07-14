@@ -106,14 +106,9 @@ pub const Chunk = struct {
         errdefer {
             exit(1);
         }
-        try self.code.resize(32);
-        self.code.clearRetainingCapacity();
-
-        try self.lines.resize(32);
-        self.lines.clearRetainingCapacity();
-
-        try self.values.resize(8);
-        self.values.clearRetainingCapacity();
+        self.code.deinit();
+        self.lines.deinit();
+        self.values.deinit();
     }
 
     pub fn disassemble(self: *const Self, name: []const u8) void {
