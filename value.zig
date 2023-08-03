@@ -35,7 +35,7 @@ pub const Value = union(enum) {
     }
 
     pub inline fn values_equal(a: Value, b: Value) bool {
-        if (@enumToInt(a) != @enumToInt(b))
+        if (@intFromEnum(a) != @intFromEnum(b))
             return false;
 
         return switch (a) {

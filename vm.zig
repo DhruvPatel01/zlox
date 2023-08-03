@@ -28,7 +28,7 @@ fn reset_stack() void {
 fn runtime_error(comptime fmt: []const u8, args: anytype) void {
     std.debug.print(fmt, args);
     std.debug.print("\n", .{});
-    const instruction = @ptrToInt(vm.ip) - @ptrToInt(vm.chunk.code.items.ptr) - 1;
+    const instruction = @intFromPtr(vm.ip) - @intFromPtr(vm.chunk.code.items.ptr) - 1;
     const line = vm.chunk.lines.items[instruction];
     std.debug.print("[line {}] in script\n", .{line});
     reset_stack();
@@ -95,7 +95,7 @@ fn run() InterpretError!void {
     while (true) {
         if (comptime common.debug_trace_execution) {
             std.debug.print("          ", .{});
-            const value_stack_total_len = @ptrToInt(vm.stack_top) - @ptrToInt(&vm.stack);
+            const value_stack_total_len = @intFromPtr(vm.stack_top) - @intFromPtr(&vm.stack);
             const value_size: usize = @sizeOf(Value);
             const value_stack_len = value_stack_total_len / value_size;
 
@@ -106,11 +106,11 @@ fn run() InterpretError!void {
             }
             std.debug.print("\n", .{});
 
-            const top = @ptrToInt(vm.ip);
-            const base = @ptrToInt(vm.chunk.code.items.ptr);
+            const top = @intFromPtr(vm.ip);
+            const base = @intFromPtr(vm.chunk.code.items.ptr);
             _ = vm.chunk.disassemble_instruction(top - base);
         }
-        var instruction = @intToEnum(OpCode, read_byte());
+        var instruction = @as(OpCode, @enumFromInt(read_byte()));
         switch (instruction) {
             .OP_CONSTANT => {
                 const constant = read_constant();

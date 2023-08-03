@@ -119,7 +119,7 @@ fn make_constant(value: Value) u8 {
         error_("Too many constants in one chunk.");
         return 0;
     }
-    return @intCast(u8, constant);
+    return @intCast(constant);
 }
 
 fn emit_constant(value: Value) void {
@@ -139,7 +139,7 @@ fn binary(can_assign: bool) void {
     _ = can_assign;
     const token_type = parser.previous.type;
     const rule = get_rule(token_type);
-    parse_precedence(@intToEnum(Precedence, @enumToInt(rule.precedence) + 1));
+    parse_precedence(@as(Precedence, @enumFromInt(@intFromEnum(rule.precedence) + 1)));
 
     switch (token_type) {
         .TOKEN_BANG_EQUAL => emit_op(.OP_NOT_EQUAL),
@@ -195,66 +195,66 @@ fn unary(_: bool) void {
 fn make_rules() [@typeInfo(TokenType).Enum.fields.len]ParseRule {
     var arr_: [@typeInfo(TokenType).Enum.fields.len]ParseRule = undefined;
 
-    arr_[@enumToInt(TokenType.TOKEN_LEFT_PAREN)] = ParseRule{ .prefix = grouping };
-    arr_[@enumToInt(TokenType.TOKEN_RIGHT_PAREN)] = ParseRule{};
-    arr_[@enumToInt(TokenType.TOKEN_LEFT_BRACE)] = ParseRule{};
-    arr_[@enumToInt(TokenType.TOKEN_RIGHT_BRACE)] = ParseRule{};
-    arr_[@enumToInt(TokenType.TOKEN_COMMA)] = ParseRule{};
-    arr_[@enumToInt(TokenType.TOKEN_DOT)] = ParseRule{};
-    arr_[@enumToInt(TokenType.TOKEN_MINUS)] = ParseRule{ .prefix = unary, .infix = binary, .precedence = .PREC_TERM };
-    arr_[@enumToInt(TokenType.TOKEN_PLUS)] = ParseRule{ .infix = binary, .precedence = .PREC_TERM };
-    arr_[@enumToInt(TokenType.TOKEN_SEMICOLON)] = ParseRule{};
-    arr_[@enumToInt(TokenType.TOKEN_SLASH)] = ParseRule{ .infix = binary, .precedence = .PREC_FACTOR };
-    arr_[@enumToInt(TokenType.TOKEN_STAR)] = ParseRule{ .infix = binary, .precedence = .PREC_FACTOR };
-    arr_[@enumToInt(TokenType.TOKEN_BANG)] = ParseRule{ .prefix = unary };
-    arr_[@enumToInt(TokenType.TOKEN_BANG_EQUAL)] = ParseRule{ .infix = binary, .precedence = .PREC_EQUALITY };
-    arr_[@enumToInt(TokenType.TOKEN_EQUAL)] = ParseRule{};
-    arr_[@enumToInt(TokenType.TOKEN_EQUAL_EQUAL)] = ParseRule{ .infix = binary, .precedence = .PREC_EQUALITY };
-    arr_[@enumToInt(TokenType.TOKEN_GREATER)] = ParseRule{ .infix = binary, .precedence = .PREC_COMPARISON };
-    arr_[@enumToInt(TokenType.TOKEN_GREATER_EQUAL)] = ParseRule{ .infix = binary, .precedence = .PREC_COMPARISON };
-    arr_[@enumToInt(TokenType.TOKEN_LESS)] = ParseRule{ .infix = binary, .precedence = .PREC_COMPARISON };
-    arr_[@enumToInt(TokenType.TOKEN_LESS_EQUAL)] = ParseRule{ .infix = binary, .precedence = .PREC_COMPARISON };
-    arr_[@enumToInt(TokenType.TOKEN_IDENTIFIER)] = ParseRule{};
-    arr_[@enumToInt(TokenType.TOKEN_STRING)] = ParseRule{ .prefix = string };
-    arr_[@enumToInt(TokenType.TOKEN_NUMBER)] = ParseRule{ .prefix = number };
-    arr_[@enumToInt(TokenType.TOKEN_AND)] = ParseRule{};
-    arr_[@enumToInt(TokenType.TOKEN_CLASS)] = ParseRule{};
-    arr_[@enumToInt(TokenType.TOKEN_ELSE)] = ParseRule{};
-    arr_[@enumToInt(TokenType.TOKEN_FALSE)] = ParseRule{ .prefix = literal };
-    arr_[@enumToInt(TokenType.TOKEN_FOR)] = ParseRule{};
-    arr_[@enumToInt(TokenType.TOKEN_FUN)] = ParseRule{};
-    arr_[@enumToInt(TokenType.TOKEN_IF)] = ParseRule{};
-    arr_[@enumToInt(TokenType.TOKEN_NIL)] = ParseRule{ .prefix = literal };
-    arr_[@enumToInt(TokenType.TOKEN_OR)] = ParseRule{};
-    arr_[@enumToInt(TokenType.TOKEN_PRINT)] = ParseRule{};
-    arr_[@enumToInt(TokenType.TOKEN_RETURN)] = ParseRule{};
-    arr_[@enumToInt(TokenType.TOKEN_SUPER)] = ParseRule{};
-    arr_[@enumToInt(TokenType.TOKEN_THIS)] = ParseRule{};
-    arr_[@enumToInt(TokenType.TOKEN_TRUE)] = ParseRule{ .prefix = literal };
-    arr_[@enumToInt(TokenType.TOKEN_VAR)] = ParseRule{};
-    arr_[@enumToInt(TokenType.TOKEN_WHILE)] = ParseRule{};
-    arr_[@enumToInt(TokenType.TOKEN_ERROR)] = ParseRule{};
-    arr_[@enumToInt(TokenType.TOKEN_EOF)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_LEFT_PAREN)] = ParseRule{ .prefix = grouping };
+    arr_[@intFromEnum(TokenType.TOKEN_RIGHT_PAREN)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_LEFT_BRACE)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_RIGHT_BRACE)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_COMMA)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_DOT)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_MINUS)] = ParseRule{ .prefix = unary, .infix = binary, .precedence = .PREC_TERM };
+    arr_[@intFromEnum(TokenType.TOKEN_PLUS)] = ParseRule{ .infix = binary, .precedence = .PREC_TERM };
+    arr_[@intFromEnum(TokenType.TOKEN_SEMICOLON)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_SLASH)] = ParseRule{ .infix = binary, .precedence = .PREC_FACTOR };
+    arr_[@intFromEnum(TokenType.TOKEN_STAR)] = ParseRule{ .infix = binary, .precedence = .PREC_FACTOR };
+    arr_[@intFromEnum(TokenType.TOKEN_BANG)] = ParseRule{ .prefix = unary };
+    arr_[@intFromEnum(TokenType.TOKEN_BANG_EQUAL)] = ParseRule{ .infix = binary, .precedence = .PREC_EQUALITY };
+    arr_[@intFromEnum(TokenType.TOKEN_EQUAL)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_EQUAL_EQUAL)] = ParseRule{ .infix = binary, .precedence = .PREC_EQUALITY };
+    arr_[@intFromEnum(TokenType.TOKEN_GREATER)] = ParseRule{ .infix = binary, .precedence = .PREC_COMPARISON };
+    arr_[@intFromEnum(TokenType.TOKEN_GREATER_EQUAL)] = ParseRule{ .infix = binary, .precedence = .PREC_COMPARISON };
+    arr_[@intFromEnum(TokenType.TOKEN_LESS)] = ParseRule{ .infix = binary, .precedence = .PREC_COMPARISON };
+    arr_[@intFromEnum(TokenType.TOKEN_LESS_EQUAL)] = ParseRule{ .infix = binary, .precedence = .PREC_COMPARISON };
+    arr_[@intFromEnum(TokenType.TOKEN_IDENTIFIER)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_STRING)] = ParseRule{ .prefix = string };
+    arr_[@intFromEnum(TokenType.TOKEN_NUMBER)] = ParseRule{ .prefix = number };
+    arr_[@intFromEnum(TokenType.TOKEN_AND)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_CLASS)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_ELSE)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_FALSE)] = ParseRule{ .prefix = literal };
+    arr_[@intFromEnum(TokenType.TOKEN_FOR)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_FUN)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_IF)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_NIL)] = ParseRule{ .prefix = literal };
+    arr_[@intFromEnum(TokenType.TOKEN_OR)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_PRINT)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_RETURN)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_SUPER)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_THIS)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_TRUE)] = ParseRule{ .prefix = literal };
+    arr_[@intFromEnum(TokenType.TOKEN_VAR)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_WHILE)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_ERROR)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_EOF)] = ParseRule{};
     return arr_;
 }
 const rules = make_rules();
 
 inline fn get_rule(type_: TokenType) *const ParseRule {
-    return &rules[@enumToInt(type_)];
+    return &rules[@intFromEnum(type_)];
 }
 
 fn parse_precedence(precedence: Precedence) void {
     advance();
 
     const token_type = parser.previous.type;
-    if (rules[@enumToInt(token_type)].prefix) |rule| {
+    if (rules[@intFromEnum(token_type)].prefix) |rule| {
         rule(false);
     } else {
         error_("Expect expression.");
     }
 
-    const precedence_int = @enumToInt(precedence);
-    while (precedence_int <= @enumToInt(get_rule(parser.current.type).precedence)) {
+    const precedence_int = @intFromEnum(precedence);
+    while (precedence_int <= @intFromEnum(get_rule(parser.current.type).precedence)) {
         advance();
         const infix_rule = get_rule(parser.previous.type).infix.?;
         infix_rule(false);

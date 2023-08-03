@@ -65,11 +65,11 @@ pub const Scanner = struct {
         self.start = source.ptr;
         self.current = source.ptr;
         self.line = 1;
-        self.end = @ptrToInt(source.ptr + source.len);
+        self.end = @intFromPtr(source.ptr + source.len);
     }
 
     inline fn is_at_end(self: *Scanner) bool {
-        return @ptrToInt(self.current) >= self.end;
+        return @intFromPtr(self.current) >= self.end;
     }
 
     pub inline fn advance(self: *Scanner) u8 {
@@ -119,7 +119,7 @@ pub const Scanner = struct {
     fn make_token(self: *const Scanner, type_: TokenType) Token {
         return Token{
             .type = type_,
-            .lexeme = self.start[0 .. @ptrToInt(self.current) - @ptrToInt(self.start)],
+            .lexeme = self.start[0 .. @intFromPtr(self.current) - @intFromPtr(self.start)],
             .line = self.line,
         };
     }
@@ -145,7 +145,7 @@ pub const Scanner = struct {
             'c' => return self.check_keyword(1, "lass", .TOKEN_CLASS),
             'e' => return self.check_keyword(1, "lse", .TOKEN_ELSE),
             'f' => {
-                if (@ptrToInt(self.current) - @ptrToInt(self.start) > 1) {
+                if (@intFromPtr(self.current) - @intFromPtr(self.start) > 1) {
                     switch (self.start[1]) {
                         'a' => return self.check_keyword(2, "lse", .TOKEN_FALSE),
                         'o' => return self.check_keyword(2, "r", .TOKEN_FOR),
@@ -161,7 +161,7 @@ pub const Scanner = struct {
             'r' => return self.check_keyword(1, "eturn", .TOKEN_RETURN),
             's' => return self.check_keyword(1, "uper", .TOKEN_SUPER),
             't' => {
-                if (@ptrToInt(self.current) - @ptrToInt(self.start) > 1) {
+                if (@intFromPtr(self.current) - @intFromPtr(self.start) > 1) {
                     switch (self.start[1]) {
                         'h' => return self.check_keyword(2, "is", .TOKEN_THIS),
                         'r' => return self.check_keyword(2, "ue", .TOKEN_TRUE),

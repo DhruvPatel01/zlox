@@ -82,7 +82,7 @@ pub const Chunk = struct {
         errdefer {
             exit(1);
         }
-        try self.code.append(@enumToInt(code));
+        try self.code.append(@intFromEnum(code));
         try self.lines.append(line);
     }
 
@@ -99,7 +99,7 @@ pub const Chunk = struct {
             exit(1);
         }
         try self.values.append(value);
-        return @intCast(u8, self.values.items.len - 1);
+        return @intCast(self.values.items.len - 1);
     }
 
     pub fn free(self: *Self) void {
@@ -127,7 +127,7 @@ pub const Chunk = struct {
             print("{d:4} ", .{self.lines.items[offset]});
         }
 
-        const instruction: OpCode = @intToEnum(OpCode, self.code.items[offset]);
+        const instruction: OpCode = @as(OpCode, @enumFromInt(self.code.items[offset]));
         switch (instruction) {
             .OP_CONSTANT => return constant_instruction("OP_CONSTANT", self, offset),
             .OP_NIL => return simple_instructoin("OP_NIL", offset),
