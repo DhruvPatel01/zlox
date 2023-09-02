@@ -129,16 +129,16 @@ pub const Chunk = struct {
 
         const instruction: OpCode = @as(OpCode, @enumFromInt(self.code.items[offset]));
         switch (instruction) {
-            .OP_CONSTANT => return constant_instruction("OP_CONSTANT", self, offset),
+            .OP_CONSTANT => return self.constant_instruction("OP_CONSTANT", offset),
             .OP_NIL => return simple_instructoin("OP_NIL", offset),
             .OP_TRUE => return simple_instructoin("OP_TRUE", offset),
             .OP_FALSE => return simple_instructoin("OP_FALSE", offset),
             .OP_POP => return simple_instructoin("OP_POP", offset),
             .OP_GET_LOCAL => unreachable,
             .OP_SET_LOCAL => unreachable,
-            .OP_DEFINE_GLOBAL => unreachable,
-            .OP_GET_GLOBAL => unreachable,
-            .OP_SET_GLOBAL => unreachable,
+            .OP_DEFINE_GLOBAL => return self.constant_instruction("OP_DEFINE_GLOBAL", offset),
+            .OP_GET_GLOBAL => return self.constant_instruction("OP_GET_GLOBAL", offset),
+            .OP_SET_GLOBAL => return self.constant_instruction("OP_SET_GLOBAL", offset),
             .OP_SET_UPVALUE => unreachable,
             .OP_GET_UPVALUE => unreachable,
             .OP_SET_PROPERTY => unreachable,
@@ -177,7 +177,7 @@ pub const Chunk = struct {
         return offset + 1;
     }
 
-    fn constant_instruction(name: []const u8, self: *const Self, offset: usize) usize {
+    fn constant_instruction(self: *const Self, name: []const u8, offset: usize) usize {
         const constant = self.code.items[offset + 1];
         print("{s:<16} {d:4} '", .{ name, constant });
         self.values.items[constant].print();

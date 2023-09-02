@@ -4,6 +4,7 @@ const common = @import("common.zig");
 const scanner_ = @import("scanner.zig");
 const Scanner = scanner_.Scanner;
 const TokenType = scanner_.TokenType;
+const Token = scanner_.Token;
 const chunk_ = @import("chunk.zig");
 const Chunk = chunk_.Chunk;
 const OpCode = chunk_.OpCode;
@@ -54,8 +55,8 @@ fn error_at(token: scanner_.Token, msg: []const u8) void {
     std.debug.print("[line {}] Error ", .{token.line});
 
     if (token.type == .TOKEN_EOF) {
-        std.debug.print(" at end", .{});
-    } else if (token.type == .TOKEN_ERROR) {} else std.debug.print(" at {s}", .{token.lexeme});
+        std.debug.print("at end", .{});
+    } else if (token.type == .TOKEN_ERROR) {} else std.debug.print("at '{s}'", .{token.lexeme});
     std.debug.print(": {s}\n", .{msg});
     parser.had_error = true;
 }
@@ -180,6 +181,23 @@ fn string(_: bool) void {
     emit_constant(Value{ .Obj = &sub_obj.obj });
 }
 
+fn namedVariable(name: Token, can_assign: bool) void {
+    const arg = identifierConstant(&name);
+
+    if (can_assign and match(.TOKEN_EQUAL)) {
+        expression();
+        emit_op(.OP_SET_GLOBAL);
+        emit_byte(arg);
+    } else {
+        emit_op(.OP_GET_GLOBAL);
+        emit_byte(arg);
+    }
+}
+
+fn variable(can_assign: bool) void {
+    namedVariable(parser.previous, can_assign);
+}
+
 fn unary(_: bool) void {
     const token_type = parser.previous.type;
 
@@ -214,7 +232,7 @@ fn make_rules() [@typeInfo(TokenType).Enum.fields.len]ParseRule {
     arr_[@intFromEnum(TokenType.TOKEN_GREATER_EQUAL)] = ParseRule{ .infix = binary, .precedence = .PREC_COMPARISON };
     arr_[@intFromEnum(TokenType.TOKEN_LESS)] = ParseRule{ .infix = binary, .precedence = .PREC_COMPARISON };
     arr_[@intFromEnum(TokenType.TOKEN_LESS_EQUAL)] = ParseRule{ .infix = binary, .precedence = .PREC_COMPARISON };
-    arr_[@intFromEnum(TokenType.TOKEN_IDENTIFIER)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_IDENTIFIER)] = ParseRule{ .prefix = variable };
     arr_[@intFromEnum(TokenType.TOKEN_STRING)] = ParseRule{ .prefix = string };
     arr_[@intFromEnum(TokenType.TOKEN_NUMBER)] = ParseRule{ .prefix = number };
     arr_[@intFromEnum(TokenType.TOKEN_AND)] = ParseRule{};
@@ -247,8 +265,9 @@ fn parse_precedence(precedence: Precedence) void {
     advance();
 
     const token_type = parser.previous.type;
+    const can_assign = @intFromEnum(precedence) <= @intFromEnum(Precedence.PREC_ASSIGNMENT);
     if (rules[@intFromEnum(token_type)].prefix) |rule| {
-        rule(false);
+        rule(can_assign);
     } else {
         error_("Expect expression.");
     }
@@ -257,12 +276,70 @@ fn parse_precedence(precedence: Precedence) void {
     while (precedence_int <= @intFromEnum(get_rule(parser.current.type).precedence)) {
         advance();
         const infix_rule = get_rule(parser.previous.type).infix.?;
-        infix_rule(false);
+        infix_rule(can_assign);
     }
+
+    if (can_assign and match(.TOKEN_EQUAL)) {
+        error_("Invalid assignment target.");
+    }
+}
+
+fn identifierConstant(name: *const Token) u8 {
+    return make_constant(Value{ .Obj = &object_.ObjString.copy(name.lexeme).obj });
+}
+fn parseVariable(errorMsg: []const u8) u8 {
+    consume(.TOKEN_IDENTIFIER, errorMsg);
+    return identifierConstant(&parser.previous);
+}
+
+fn defineVariable(global: u8) void {
+    emit_op(.OP_DEFINE_GLOBAL);
+    emit_byte(global);
 }
 
 fn expression() void {
     parse_precedence(.PREC_ASSIGNMENT);
+}
+
+fn varDeclaration() void {
+    const global = parseVariable("Expect variable name.");
+
+    if (match(.TOKEN_EQUAL)) {
+        expression();
+    } else {
+        emit_op(.OP_NIL);
+    }
+    consume(.TOKEN_SEMICOLON, "Expect ';' after variable declaration.");
+
+    defineVariable(global);
+}
+
+fn expressionStatement() void {
+    expression();
+    consume(.TOKEN_SEMICOLON, "Expect ';' after expression.");
+    emit_op(.OP_POP);
+}
+
+fn printStatement() void {
+    expression();
+    consume(.TOKEN_SEMICOLON, "Expect ';' after value.");
+    emit_op(.OP_PRINT);
+}
+
+fn declaration() void {
+    if (match(.TOKEN_VAR)) {
+        varDeclaration();
+    } else {
+        statement();
+    }
+}
+
+fn statement() void {
+    if (match(.TOKEN_PRINT)) {
+        printStatement();
+    } else {
+        expressionStatement();
+    }
 }
 
 pub fn compile(source: []const u8, chunk: *Chunk) bool {
@@ -272,8 +349,10 @@ pub fn compile(source: []const u8, chunk: *Chunk) bool {
     parser.panic_mode = false;
 
     advance();
-    expression();
-    consume(.TOKEN_EOF, "Expect end of expression.");
+
+    while (!match(.TOKEN_EOF)) {
+        declaration();
+    }
     end_compiler();
     return !parser.had_error;
 }

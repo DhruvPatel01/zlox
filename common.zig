@@ -5,5 +5,5 @@ pub const allocator = std.heap.c_allocator;
 // // defer std.debug.assert(general_purpose_allocator.deinit() == .ok);
 // var allocator = null;
 
-pub const debug_print_code = true;
+pub const debug_print_code = false;
 pub const debug_trace_execution = false;

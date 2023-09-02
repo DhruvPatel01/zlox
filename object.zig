@@ -62,11 +62,16 @@ pub const ObjString = struct {
         var obj = Obj.allocate(ObjString);
         obj.chars = chars;
         obj.hash = hash;
+        _ = VM.vm.strings.set(obj, Value.Nil);
         return obj;
     }
 
     pub fn copy(chars: []const u8) *ObjString {
         const hash = hash_string(chars);
+        const interned = VM.vm.strings.findString(chars, hash);
+        if (interned != null) {
+            return interned.?;
+        }
         var str = common.allocator.alloc(u8, chars.len) catch unreachable;
         @memcpy(str, chars);
         return allocate(str, hash);
@@ -74,6 +79,11 @@ pub const ObjString = struct {
 
     pub fn take(chars: []const u8) *ObjString {
         const hash = hash_string(chars);
+        const interned = VM.vm.strings.findString(chars, hash);
+        if (interned != null) {
+            common.allocator.free(chars);
+            return interned.?;
+        }
         return allocate(chars, hash);
     }
 };

@@ -6,6 +6,7 @@ const OpCode = @import("chunk.zig").OpCode;
 const Value = @import("value.zig").Value;
 const common = @import("common.zig");
 const compiler = @import("compiler.zig");
+const Table = @import("table.zig").Table;
 
 const MAX_FRAMES = 64;
 const STACK_MAX = 64 * 256;
@@ -18,6 +19,8 @@ pub const VM = struct {
     ip: [*]u8 = undefined,
     stack: [STACK_MAX]Value = undefined,
     stack_top: [*]Value = undefined,
+    globals: Table = undefined,
+    strings: Table = undefined,
     objects: ?*object.Obj = null,
 };
 
@@ -52,6 +55,8 @@ fn peek(distance: usize) Value {
 pub fn init() void {
     reset_stack();
     vm.objects = null;
+    vm.globals.init();
+    vm.strings.init();
 }
 
 fn free_objects() void {
@@ -64,6 +69,8 @@ fn free_objects() void {
 }
 
 pub fn free() void {
+    vm.globals.free();
+    vm.strings.free();
     free_objects();
 }
 
@@ -119,12 +126,31 @@ fn run() InterpretError!void {
             .OP_NIL => push(Value.nil()),
             .OP_TRUE => push(Value.boolean(true)),
             .OP_FALSE => push(Value.boolean(false)),
-            .OP_POP => unreachable,
+            .OP_POP => _ = pop(),
             .OP_GET_LOCAL => unreachable,
             .OP_SET_LOCAL => unreachable,
-            .OP_DEFINE_GLOBAL => unreachable,
-            .OP_GET_GLOBAL => unreachable,
-            .OP_SET_GLOBAL => unreachable,
+            .OP_DEFINE_GLOBAL => {
+                const name = read_string();
+                _ = vm.globals.set(name, peek(0));
+                _ = pop();
+            },
+            .OP_GET_GLOBAL => {
+                const name = read_string();
+                var value: Value = undefined;
+                if (!vm.globals.get(name, &value)) {
+                    runtime_error("Undefined variable '{s}'.", .{name.chars});
+                    return error.RuntimeError;
+                }
+                push(value);
+            },
+            .OP_SET_GLOBAL => {
+                const name = read_string();
+                if (vm.globals.set(name, peek(0))) {
+                    _ = vm.globals.delete(name);
+                    runtime_error("Undefined variable {s}.", .{name.chars});
+                    return error.RuntimeError;
+                }
+            },
             .OP_SET_UPVALUE => unreachable,
             .OP_GET_UPVALUE => unreachable,
             .OP_SET_PROPERTY => unreachable,
@@ -185,9 +211,6 @@ fn run() InterpretError!void {
             .OP_CLOSURE => unreachable,
             .OP_CLOSE_UPVALUE => unreachable,
             .OP_RETURN => {
-                const value = pop();
-                value.print();
-                std.debug.print("\n", .{});
                 return;
             },
             .OP_CLASS => unreachable,
@@ -204,6 +227,10 @@ inline fn read_byte() u8 {
 
 inline fn read_constant() Value {
     return vm.chunk.values.items[read_byte()];
+}
+
+inline fn read_string() *object.ObjString {
+    return @fieldParentPtr(object.ObjString, "obj", read_constant().Obj);
 }
 
 inline fn binary_op(comptime op: OpCode) InterpretError!void {

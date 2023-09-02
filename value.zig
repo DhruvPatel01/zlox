@@ -13,7 +13,7 @@ pub const Value = union(enum) {
         switch (self.*) {
             .Number => |n| std.debug.print("{d}", .{n}),
             .Bool => |b| std.debug.print("{}", .{b}),
-            .Nil => std.debug.print("Nil", .{}),
+            .Nil => std.debug.print("nil", .{}),
             .Obj => |obj| obj.print(),
         }
     }
@@ -45,7 +45,7 @@ pub const Value = union(enum) {
             .Obj => {
                 const a_str = @fieldParentPtr(object.ObjString, "obj", a.Obj);
                 const b_str = @fieldParentPtr(object.ObjString, "obj", b.Obj);
-                return a_str.hash == b_str.hash and std.mem.eql(u8, a_str.chars, b_str.chars);
+                return a_str == b_str;
             }, // for now we only have string objects. Will need to revisit this in future.
         };
     }
