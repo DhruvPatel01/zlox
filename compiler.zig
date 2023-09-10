@@ -41,8 +41,24 @@ const ParseRule = struct {
     precedence: Precedence = .PREC_NONE,
 };
 
+const Local = struct {
+    name: Token,
+    depth: i32,
+};
+
+const Compiler = struct {
+    locals: [256]Local = undefined,
+    local_count: u8 = 0,
+    scope_depth: i32 = 0,
+
+    fn init(self: *Compiler) void {
+        current = self;
+    }
+};
+
 var parser: Parser = undefined;
 var scanner: Scanner = undefined;
+var current: *Compiler = undefined;
 var compiling_chunk: *Chunk = undefined;
 
 inline fn current_chunk() *Chunk {
@@ -136,6 +152,36 @@ fn end_compiler() void {
     }
 }
 
+inline fn beginScope() void {
+    current.scope_depth += 1;
+}
+
+inline fn endScope() void {
+    current.scope_depth -= 1;
+    var pop_n: u8 = 0;
+    var i = @as(i32, current.local_count) - 1;
+    while (i >= 0 and current.locals[@intCast(i)].depth > current.scope_depth) : (i -= 1) {
+        pop_n += 1;
+    }
+    current.local_count -= pop_n;
+    emit_op(.OP_POPN);
+    emit_byte(pop_n);
+}
+
+fn resolveLocal(compiler: *Compiler, token: *const Token) ?u8 {
+    var i: i32 = @as(i32, compiler.local_count) - 1;
+    while (i >= 0) : (i -= 1) {
+        const local = &compiler.locals[@intCast(i)];
+        if (std.mem.eql(u8, local.name.lexeme, token.lexeme)) {
+            if (local.depth == -1) {
+                error_("Can't read local variable in its own initializer.");
+            }
+            return @intCast(i);
+        }
+    }
+    return null;
+}
+
 fn binary(can_assign: bool) void {
     _ = can_assign;
     const token_type = parser.previous.type;
@@ -182,15 +228,26 @@ fn string(_: bool) void {
 }
 
 fn namedVariable(name: Token, can_assign: bool) void {
-    const arg = identifierConstant(&name);
+    var set_op: OpCode = undefined;
+    var get_op: OpCode = undefined;
+
+    var arg = resolveLocal(current, &name);
+    if (arg != null) {
+        set_op = .OP_SET_LOCAL;
+        get_op = .OP_GET_LOCAL;
+    } else {
+        arg = identifierConstant(&name);
+        set_op = .OP_SET_GLOBAL;
+        get_op = .OP_GET_GLOBAL;
+    }
 
     if (can_assign and match(.TOKEN_EQUAL)) {
         expression();
-        emit_op(.OP_SET_GLOBAL);
-        emit_byte(arg);
+        emit_op(set_op);
+        emit_byte(arg.?);
     } else {
-        emit_op(.OP_GET_GLOBAL);
-        emit_byte(arg);
+        emit_op(get_op);
+        emit_byte(arg.?);
     }
 }
 
@@ -287,18 +344,67 @@ fn parse_precedence(precedence: Precedence) void {
 fn identifierConstant(name: *const Token) u8 {
     return make_constant(Value{ .Obj = &object_.ObjString.copy(name.lexeme).obj });
 }
+
+fn addLocal(name: Token) void {
+    if (current.local_count == 256) {
+        error_("Too many local variables in a function.");
+        return;
+    }
+    var local = &current.locals[current.local_count];
+    current.local_count += 1;
+    local.name = name;
+    local.depth = -1;
+}
+
+fn declareVariable() void {
+    if (current.scope_depth == 0) return;
+
+    const name = &parser.previous;
+    var i = @as(i32, current.local_count) - 1;
+    while (i >= 0) : (i -= 1) {
+        var local = &current.locals[@intCast(i)];
+        if (local.depth != -1 and local.depth < current.scope_depth) {
+            break;
+        }
+
+        if (std.mem.eql(u8, name.lexeme, local.name.lexeme)) {
+            error_("Already a variable with this name in this scope.");
+        }
+    }
+    addLocal(name.*);
+}
+
 fn parseVariable(errorMsg: []const u8) u8 {
     consume(.TOKEN_IDENTIFIER, errorMsg);
+
+    declareVariable();
+    if (current.scope_depth > 0) return 0;
+
     return identifierConstant(&parser.previous);
 }
 
+fn markInitialized() void {
+    current.locals[current.local_count - 1].depth = current.scope_depth;
+}
+
 fn defineVariable(global: u8) void {
+    if (current.scope_depth > 0) {
+        markInitialized();
+        return;
+    }
     emit_op(.OP_DEFINE_GLOBAL);
     emit_byte(global);
 }
 
 fn expression() void {
     parse_precedence(.PREC_ASSIGNMENT);
+}
+
+fn block() void {
+    while (!check(.TOKEN_RIGHT_BRACE) and !check(.TOKEN_EOF)) {
+        declaration();
+    }
+    consume(.TOKEN_RIGHT_BRACE, "Expect '}' after block.");
 }
 
 fn varDeclaration() void {
@@ -337,6 +443,10 @@ fn declaration() void {
 fn statement() void {
     if (match(.TOKEN_PRINT)) {
         printStatement();
+    } else if (match(.TOKEN_LEFT_BRACE)) {
+        beginScope();
+        block();
+        endScope();
     } else {
         expressionStatement();
     }
@@ -344,6 +454,10 @@ fn statement() void {
 
 pub fn compile(source: []const u8, chunk: *Chunk) bool {
     scanner.init(source);
+
+    var compiler = Compiler{};
+    compiler.init();
+
     compiling_chunk = chunk;
     parser.had_error = false;
     parser.panic_mode = false;

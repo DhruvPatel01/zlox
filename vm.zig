@@ -47,6 +47,10 @@ fn pop() Value {
     return vm.stack_top[0];
 }
 
+fn popN(n: u8) void {
+    vm.stack_top -= n;
+}
+
 fn peek(distance: usize) Value {
     const ptr = vm.stack_top - 1 - distance;
     return ptr[0];
@@ -127,8 +131,15 @@ fn run() InterpretError!void {
             .OP_TRUE => push(Value.boolean(true)),
             .OP_FALSE => push(Value.boolean(false)),
             .OP_POP => _ = pop(),
-            .OP_GET_LOCAL => unreachable,
-            .OP_SET_LOCAL => unreachable,
+            .OP_POPN => popN(read_byte()),
+            .OP_GET_LOCAL => {
+                const slot = read_byte();
+                push(vm.stack[slot]);
+            },
+            .OP_SET_LOCAL => {
+                const slot = read_byte();
+                vm.stack[slot] = peek(0);
+            },
             .OP_DEFINE_GLOBAL => {
                 const name = read_string();
                 _ = vm.globals.set(name, peek(0));

@@ -16,6 +16,7 @@ pub const OpCode = enum(u8) {
     OP_FALSE,
 
     OP_POP,
+    OP_POPN,
 
     OP_GET_LOCAL,
     OP_SET_LOCAL,
@@ -134,8 +135,9 @@ pub const Chunk = struct {
             .OP_TRUE => return simple_instructoin("OP_TRUE", offset),
             .OP_FALSE => return simple_instructoin("OP_FALSE", offset),
             .OP_POP => return simple_instructoin("OP_POP", offset),
-            .OP_GET_LOCAL => unreachable,
-            .OP_SET_LOCAL => unreachable,
+            .OP_POPN => return self.byte_instruction("OP_POPN", offset),
+            .OP_GET_LOCAL => return self.byte_instruction("OP_GET_LOCAL", offset),
+            .OP_SET_LOCAL => return self.byte_instruction("OP_SET_LOCAL", offset),
             .OP_DEFINE_GLOBAL => return self.constant_instruction("OP_DEFINE_GLOBAL", offset),
             .OP_GET_GLOBAL => return self.constant_instruction("OP_GET_GLOBAL", offset),
             .OP_SET_GLOBAL => return self.constant_instruction("OP_SET_GLOBAL", offset),
@@ -182,6 +184,12 @@ pub const Chunk = struct {
         print("{s:<16} {d:4} '", .{ name, constant });
         self.values.items[constant].print();
         print("'\n", .{});
+        return offset + 2;
+    }
+
+    fn byte_instruction(self: *const Self, name: []const u8, offset: usize) usize {
+        const slot = self.code[offset + 1];
+        print("%-16s %4d\n", .{ name, slot });
         return offset + 2;
     }
 };
