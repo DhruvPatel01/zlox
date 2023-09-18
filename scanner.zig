@@ -44,6 +44,9 @@ pub const TokenType = enum {
     TOKEN_TRUE,
     TOKEN_VAR,
     TOKEN_WHILE,
+    TOKEN_SWITCH,
+    TOKEN_CASE,
+    TOKEN_DEFAULT,
 
     TOKEN_ERROR,
     TOKEN_EOF,
@@ -133,7 +136,7 @@ pub const Scanner = struct {
     }
 
     fn check_keyword(self: *const Scanner, start: usize, rest: []const u8, type_: TokenType) TokenType {
-        if (std.mem.eql(u8, self.start[start .. start + rest.len], rest)) {
+        if (@intFromPtr(self.current) - @intFromPtr(self.start) == start + rest.len and std.mem.eql(u8, self.start[start .. start + rest.len], rest)) {
             return type_;
         }
         return .TOKEN_IDENTIFIER;
