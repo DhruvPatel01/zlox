@@ -48,7 +48,10 @@ fn pop() Value {
 }
 
 fn popN(n: u8) void {
-    vm.stack_top -= n;
+    for (0..n) |_| {
+        _ = pop();
+    }
+    // vm.stack_top -= n;
 }
 
 fn peek(distance: usize) Value {
@@ -121,7 +124,7 @@ fn run() InterpretError!void {
             const base = @intFromPtr(vm.chunk.code.items.ptr);
             _ = vm.chunk.disassemble_instruction(top - base);
         }
-        var instruction = @as(OpCode, @enumFromInt(read_byte()));
+        var instruction: OpCode = @enumFromInt(read_byte());
         switch (instruction) {
             .OP_CONSTANT => {
                 const constant = read_constant();
@@ -158,7 +161,7 @@ fn run() InterpretError!void {
                 const name = read_string();
                 if (vm.globals.set(name, peek(0))) {
                     _ = vm.globals.delete(name);
-                    runtime_error("Undefined variable {s}.", .{name.chars});
+                    runtime_error("Undefined variable '{s}'.", .{name.chars});
                     return error.RuntimeError;
                 }
             },
@@ -202,20 +205,35 @@ fn run() InterpretError!void {
                 switch (ptr[0]) {
                     .Number => ptr[0].Number = -ptr[0].Number,
                     else => {
-                        runtime_error("Oprand must be a number.", .{});
+                        runtime_error("Operand must be a number.", .{});
                         return error.RuntimeError;
                     },
                 }
             },
             .OP_PRINT => {
                 const value = pop();
-                value.print();
-                std.debug.print("\n", .{});
-                return;
+                value.print(std.io.getStdOut().writer(), true);
             },
-            .OP_JUMP => unreachable,
-            .OP_JUMP_IF_FALSE => unreachable,
-            .OP_LOOP => unreachable,
+            .OP_JUMP => {
+                const offset = read_short();
+                vm.ip += offset;
+            },
+            .OP_JUMP_IF_FALSE => {
+                const offset = read_short();
+                if (peek(0).is_falsy()) {
+                    vm.ip += offset;
+                }
+            },
+            .OP_JUMP_IF_TRUE => {
+                const offset = read_short();
+                if (!peek(0).is_falsy()) {
+                    vm.ip += offset;
+                }
+            },
+            .OP_LOOP => {
+                const offset = read_short();
+                vm.ip -= offset;
+            },
             .OP_CALL => unreachable,
             .OP_INVOKE => unreachable,
             .OP_SUPER_INVOKE => unreachable,
@@ -234,6 +252,11 @@ fn run() InterpretError!void {
 inline fn read_byte() u8 {
     defer vm.ip += 1;
     return vm.ip[0];
+}
+
+inline fn read_short() u16 {
+    defer vm.ip += 2;
+    return (@as(u16, vm.ip[0]) << 8) | vm.ip[1];
 }
 
 inline fn read_constant() Value {

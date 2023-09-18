@@ -48,6 +48,7 @@ pub const OpCode = enum(u8) {
 
     OP_JUMP,
     OP_JUMP_IF_FALSE,
+    OP_JUMP_IF_TRUE,
     OP_LOOP,
     OP_CALL,
     OP_INVOKE,
@@ -159,9 +160,10 @@ pub const Chunk = struct {
             .OP_NOT => return simple_instructoin("OP_NOT", offset),
             .OP_NEGATE => return simple_instructoin("OP_NEGATE", offset),
             .OP_PRINT => return simple_instructoin("OP_PRINT", offset),
-            .OP_JUMP => unreachable,
-            .OP_JUMP_IF_FALSE => unreachable,
-            .OP_LOOP => unreachable,
+            .OP_JUMP => return self.jump_instruction("OP_JUMP", 1, offset),
+            .OP_JUMP_IF_FALSE => return self.jump_instruction("OP_JUMP_IF_FALSE", 1, offset),
+            .OP_JUMP_IF_TRUE => return self.jump_instruction("OP_JUMP_IF_TRUE", 1, offset),
+            .OP_LOOP => return self.jump_instruction("OP_LOOP", -1, offset),
             .OP_CALL => unreachable,
             .OP_INVOKE => unreachable,
             .OP_SUPER_INVOKE => unreachable,
@@ -182,14 +184,27 @@ pub const Chunk = struct {
     fn constant_instruction(self: *const Self, name: []const u8, offset: usize) usize {
         const constant = self.code.items[offset + 1];
         print("{s:<16} {d:4} '", .{ name, constant });
-        self.values.items[constant].print();
+        self.values.items[constant].print(std.io.getStdErr().writer(), false);
         print("'\n", .{});
         return offset + 2;
     }
 
     fn byte_instruction(self: *const Self, name: []const u8, offset: usize) usize {
-        const slot = self.code[offset + 1];
-        print("%-16s %4d\n", .{ name, slot });
+        const slot = self.code.items[offset + 1];
+        print("{s:<16} {d:4}\n", .{ name, slot });
         return offset + 2;
+    }
+
+    fn jump_instruction(self: *const Self, name: []const u8, comptime sign: i8, offset: usize) usize {
+        const jump = @as(u16, self.code.items[offset + 1]) << 8 | self.code.items[offset + 2];
+
+        var jumpOffset: usize = undefined;
+        if (comptime (sign > 0)) {
+            jumpOffset = offset + 3 + jump;
+        } else {
+            jumpOffset = offset + 3 - jump;
+        }
+        print("{s:<16} {d:4} -> {d}\n", .{ name, offset, jumpOffset });
+        return offset + 3;
     }
 };

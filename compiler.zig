@@ -68,11 +68,11 @@ inline fn current_chunk() *Chunk {
 fn error_at(token: scanner_.Token, msg: []const u8) void {
     if (parser.panic_mode) return;
     parser.panic_mode = true;
-    std.debug.print("[line {}] Error ", .{token.line});
+    std.debug.print("[line {}] Error", .{token.line});
 
     if (token.type == .TOKEN_EOF) {
-        std.debug.print("at end", .{});
-    } else if (token.type == .TOKEN_ERROR) {} else std.debug.print("at '{s}'", .{token.lexeme});
+        std.debug.print(" at end", .{});
+    } else if (token.type == .TOKEN_ERROR) {} else std.debug.print(" at '{s}'", .{token.lexeme});
     std.debug.print(": {s}\n", .{msg});
     parser.had_error = true;
 }
@@ -121,9 +121,28 @@ inline fn emit_byte(byte: u8) void {
     current_chunk().write_byte(byte, parser.previous.line);
 }
 
+inline fn emitLoop(loop_start: usize) void {
+    emit_op(.OP_LOOP);
+
+    const offset = current_chunk().code.items.len - loop_start + 2;
+    if (offset > std.math.maxInt(u16)) {
+        error_("Loop body too large.");
+    }
+
+    emit_byte(@truncate(offset >> 8));
+    emit_byte(@truncate(offset));
+}
+
 inline fn emit_bytes(byte1: u8, byte2: u8) void {
     emit_byte(byte1);
     emit_byte(byte2);
+}
+
+inline fn emitJump(op: OpCode) usize {
+    emit_op(op);
+    emit_byte(0xff);
+    emit_byte(0xff);
+    return current_chunk().code.items.len - 2;
 }
 
 inline fn emit_return() void {
@@ -142,6 +161,15 @@ fn make_constant(value: Value) u8 {
 fn emit_constant(value: Value) void {
     emit_op(.OP_CONSTANT);
     emit_byte(make_constant(value));
+}
+
+fn patchJump(offset: usize) void {
+    const jump = current_chunk().code.items.len - offset - 2;
+    if (jump > std.math.maxInt(u16)) {
+        error_("Too much code to jump over.");
+    }
+    current_chunk().code.items[offset] = @truncate(jump >> 8);
+    current_chunk().code.items[offset + 1] = @truncate(jump);
 }
 
 fn end_compiler() void {
@@ -164,8 +192,10 @@ inline fn endScope() void {
         pop_n += 1;
     }
     current.local_count -= pop_n;
-    emit_op(.OP_POPN);
-    emit_byte(pop_n);
+    if (pop_n > 0) {
+        emit_op(.OP_POPN);
+        emit_byte(pop_n);
+    }
 }
 
 fn resolveLocal(compiler: *Compiler, token: *const Token) ?u8 {
@@ -220,6 +250,15 @@ fn grouping(_: bool) void {
 fn number(_: bool) void {
     const value = std.fmt.parseFloat(f64, parser.previous.lexeme) catch unreachable;
     emit_constant(Value{ .Number = value });
+}
+
+fn or_(_: bool) void {
+    const jump = emitJump(.OP_JUMP_IF_TRUE);
+
+    emit_op(.OP_POP);
+    parse_precedence(.PREC_OR);
+
+    patchJump(jump);
 }
 
 fn string(_: bool) void {
@@ -292,7 +331,7 @@ fn make_rules() [@typeInfo(TokenType).Enum.fields.len]ParseRule {
     arr_[@intFromEnum(TokenType.TOKEN_IDENTIFIER)] = ParseRule{ .prefix = variable };
     arr_[@intFromEnum(TokenType.TOKEN_STRING)] = ParseRule{ .prefix = string };
     arr_[@intFromEnum(TokenType.TOKEN_NUMBER)] = ParseRule{ .prefix = number };
-    arr_[@intFromEnum(TokenType.TOKEN_AND)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_AND)] = ParseRule{ .infix = and_, .precedence = .PREC_AND };
     arr_[@intFromEnum(TokenType.TOKEN_CLASS)] = ParseRule{};
     arr_[@intFromEnum(TokenType.TOKEN_ELSE)] = ParseRule{};
     arr_[@intFromEnum(TokenType.TOKEN_FALSE)] = ParseRule{ .prefix = literal };
@@ -300,7 +339,7 @@ fn make_rules() [@typeInfo(TokenType).Enum.fields.len]ParseRule {
     arr_[@intFromEnum(TokenType.TOKEN_FUN)] = ParseRule{};
     arr_[@intFromEnum(TokenType.TOKEN_IF)] = ParseRule{};
     arr_[@intFromEnum(TokenType.TOKEN_NIL)] = ParseRule{ .prefix = literal };
-    arr_[@intFromEnum(TokenType.TOKEN_OR)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_OR)] = ParseRule{ .infix = or_, .precedence = .PREC_OR };
     arr_[@intFromEnum(TokenType.TOKEN_PRINT)] = ParseRule{};
     arr_[@intFromEnum(TokenType.TOKEN_RETURN)] = ParseRule{};
     arr_[@intFromEnum(TokenType.TOKEN_SUPER)] = ParseRule{};
@@ -396,6 +435,15 @@ fn defineVariable(global: u8) void {
     emit_byte(global);
 }
 
+fn and_(_: bool) void {
+    const jump = emitJump(.OP_JUMP_IF_FALSE);
+
+    emit_op(.OP_POP);
+    parse_precedence(.PREC_AND);
+
+    patchJump(jump);
+}
+
 fn expression() void {
     parse_precedence(.PREC_ASSIGNMENT);
 }
@@ -426,10 +474,82 @@ fn expressionStatement() void {
     emit_op(.OP_POP);
 }
 
+fn forStatement() void {
+    beginScope();
+
+    consume(.TOKEN_LEFT_PAREN, "Expect '(' after 'for'.");
+    if (match(.TOKEN_SEMICOLON)) {} else if (match(.TOKEN_VAR)) {
+        varDeclaration();
+    } else {
+        expressionStatement();
+    }
+
+    var loop_start = current_chunk().code.items.len;
+    var exit_jump: ?usize = null;
+    if (!match(.TOKEN_SEMICOLON)) {
+        expression();
+        consume(.TOKEN_SEMICOLON, "Expect ';' after loop condition.");
+        exit_jump = emitJump(.OP_JUMP_IF_FALSE);
+        emit_op(.OP_POP);
+    }
+
+    if (!match(.TOKEN_RIGHT_PAREN)) {
+        const body_jump = emitJump(.OP_JUMP);
+        const incr_start = current_chunk().code.items.len;
+        expression();
+        emit_op(.OP_POP);
+        consume(.TOKEN_RIGHT_PAREN, "Expect ')' after for clauses.");
+
+        emitLoop(loop_start);
+        loop_start = incr_start;
+        patchJump(body_jump);
+    }
+
+    statement();
+    emitLoop(loop_start);
+    if (exit_jump != null) {
+        patchJump(exit_jump.?);
+        emit_op(.OP_POP);
+    }
+    endScope();
+}
+
+fn ifStatement() void {
+    consume(.TOKEN_LEFT_PAREN, "Expect '(' after 'if'.");
+    expression();
+    consume(.TOKEN_RIGHT_PAREN, "Expect ')' after condition.");
+
+    const thenJump = emitJump(.OP_JUMP_IF_FALSE);
+    emit_op(.OP_POP);
+    statement();
+
+    const elseJump = emitJump(.OP_JUMP);
+    patchJump(thenJump);
+    emit_op(.OP_POP);
+
+    if (match(.TOKEN_ELSE)) statement();
+    patchJump(elseJump);
+}
+
 fn printStatement() void {
     expression();
     consume(.TOKEN_SEMICOLON, "Expect ';' after value.");
     emit_op(.OP_PRINT);
+}
+
+fn whileStatement() void {
+    const loop_start = current_chunk().code.items.len;
+    consume(.TOKEN_LEFT_PAREN, "Expect '(' after 'while'.");
+    expression();
+    consume(.TOKEN_RIGHT_PAREN, "Expect ')' after condition.");
+
+    const exit_jump = emitJump(.OP_JUMP_IF_FALSE);
+    emit_op(.OP_POP);
+    statement();
+    emitLoop(loop_start);
+
+    patchJump(exit_jump);
+    emit_op(.OP_POP);
 }
 
 fn declaration() void {
@@ -443,6 +563,12 @@ fn declaration() void {
 fn statement() void {
     if (match(.TOKEN_PRINT)) {
         printStatement();
+    } else if (match(.TOKEN_FOR)) {
+        forStatement();
+    } else if (match(.TOKEN_IF)) {
+        ifStatement();
+    } else if (match(.TOKEN_WHILE)) {
+        whileStatement();
     } else if (match(.TOKEN_LEFT_BRACE)) {
         beginScope();
         block();

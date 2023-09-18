@@ -9,12 +9,21 @@ pub const Value = union(enum) {
     Number: f64,
     Obj: *Obj,
 
-    pub fn print(self: *const Value) void {
-        switch (self.*) {
-            .Number => |n| std.debug.print("{d}", .{n}),
-            .Bool => |b| std.debug.print("{}", .{b}),
-            .Nil => std.debug.print("nil", .{}),
-            .Obj => |obj| obj.print(),
+    pub fn print(self: *const Value, writer: anytype, comptime newline: bool) void {
+        if (newline) {
+            switch (self.*) {
+                .Number => |n| writer.print("{d}\n", .{n}) catch {},
+                .Bool => |b| writer.print("{}\n", .{b}) catch {},
+                .Nil => writer.print("nil\n", .{}) catch {},
+                .Obj => |obj| obj.print(writer, newline) catch {},
+            }
+        } else {
+            switch (self.*) {
+                .Number => |n| writer.print("{d}", .{n}) catch {},
+                .Bool => |b| writer.print("{}", .{b}) catch {},
+                .Nil => writer.print("nil", .{}) catch {},
+                .Obj => |obj| obj.print(writer, newline) catch {},
+            }
         }
     }
 

@@ -42,13 +42,23 @@ pub const Obj = struct {
         }
     }
 
-    pub fn print(obj: *Obj) void {
-        switch (obj.type) {
-            .OBJ_STRING => {
-                const str_obj = @fieldParentPtr(ObjString, "obj", obj);
-                std.debug.print("{s}", .{str_obj.chars});
-            },
-            else => unreachable,
+    pub fn print(obj: *Obj, writer: anytype, comptime newline: bool) !void {
+        if (newline) {
+            switch (obj.type) {
+                .OBJ_STRING => {
+                    const str_obj = @fieldParentPtr(ObjString, "obj", obj);
+                    try writer.print("{s}\n", .{str_obj.chars});
+                },
+                else => unreachable,
+            }
+        } else {
+            switch (obj.type) {
+                .OBJ_STRING => {
+                    const str_obj = @fieldParentPtr(ObjString, "obj", obj);
+                    try writer.print("{s}", .{str_obj.chars});
+                },
+                else => unreachable,
+            }
         }
     }
 };
