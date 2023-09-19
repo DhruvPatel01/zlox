@@ -594,11 +594,27 @@ fn switchStatement() void {
     consume(.TOKEN_RIGHT_BRACE, "Expect '}' to end switch statement.");
 }
 
+fn synchronize() void {
+    parser.panic_mode = false;
+    while (parser.current.type != .TOKEN_EOF) {
+        if (parser.previous.type == .TOKEN_SEMICOLON) return;
+        switch (parser.current.type) {
+            .TOKEN_CLASS, .TOKEN_FUN, .TOKEN_VAR, .TOKEN_FOR, .TOKEN_IF, .TOKEN_WHILE, .TOKEN_PRINT, .TOKEN_RETURN => return,
+            else => {},
+        }
+        advance();
+    }
+}
+
 fn declaration() void {
     if (match(.TOKEN_VAR)) {
         varDeclaration();
     } else {
         statement();
+    }
+
+    if (parser.panic_mode) {
+        synchronize();
     }
 }
 
