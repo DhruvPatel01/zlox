@@ -552,6 +552,48 @@ fn whileStatement() void {
     emit_op(.OP_POP);
 }
 
+fn switchStatement() void {
+    consume(.TOKEN_LEFT_PAREN, "Expect '(' after switch.");
+    expression();
+    consume(.TOKEN_RIGHT_PAREN, "Expect ')' after switch expression.");
+
+    consume(.TOKEN_LEFT_BRACE, "Expect '{' after swtich expression.");
+
+    var end_jumps: [256]usize = undefined;
+    var n_end_jumps: usize = 0;
+    while (match(.TOKEN_CASE)) {
+        if (n_end_jumps > 256) {
+            error_("Can not have more than 256 case statements in this lox implementation.");
+            break;
+        }
+        expression();
+        const next_jump = emitJump(.OP_JUMP_IF_NEQUAL);
+        consume(.TOKEN_COLON, "Expect ':' after case.");
+
+        while (!check(.TOKEN_CASE) and !check(.TOKEN_DEFAULT) and !check(.TOKEN_RIGHT_BRACE)) {
+            statement();
+        }
+        end_jumps[n_end_jumps] = emitJump(.OP_JUMP);
+        n_end_jumps += 1;
+
+        patchJump(next_jump);
+    }
+
+    if (match(.TOKEN_DEFAULT)) {
+        consume(.TOKEN_COLON, "Expect ':' after default.");
+        while (!check(.TOKEN_RIGHT_BRACE)) {
+            statement();
+        }
+    }
+
+    for (0..n_end_jumps) |i| {
+        patchJump(end_jumps[i]);
+    }
+
+    emit_op(.OP_POP);
+    consume(.TOKEN_RIGHT_BRACE, "Expect '}' to end switch statement.");
+}
+
 fn declaration() void {
     if (match(.TOKEN_VAR)) {
         varDeclaration();
@@ -569,6 +611,8 @@ fn statement() void {
         ifStatement();
     } else if (match(.TOKEN_WHILE)) {
         whileStatement();
+    } else if (match(.TOKEN_SWITCH)) {
+        switchStatement();
     } else if (match(.TOKEN_LEFT_BRACE)) {
         beginScope();
         block();

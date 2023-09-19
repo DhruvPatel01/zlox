@@ -115,7 +115,7 @@ fn run() InterpretError!void {
 
             for (0..value_stack_len) |i| {
                 std.debug.print("[ ", .{});
-                vm.stack[i].print();
+                vm.stack[i].print(std.io.getStdErr().writer(), false);
                 std.debug.print(" ]", .{});
             }
             std.debug.print("\n", .{});
@@ -217,6 +217,13 @@ fn run() InterpretError!void {
             .OP_JUMP => {
                 const offset = read_short();
                 vm.ip += offset;
+            },
+            .OP_JUMP_IF_NEQUAL => {
+                const b = pop();
+                const offset = read_short();
+                if (!peek(0).values_equal(b)) {
+                    vm.ip += offset;
+                }
             },
             .OP_JUMP_IF_FALSE => {
                 const offset = read_short();

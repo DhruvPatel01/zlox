@@ -47,6 +47,7 @@ pub const OpCode = enum(u8) {
     OP_PRINT,
 
     OP_JUMP,
+    OP_JUMP_IF_NEQUAL, // jumps if top two items are not equal. Regardless, pops the top item.
     OP_JUMP_IF_FALSE,
     OP_JUMP_IF_TRUE,
     OP_LOOP,
@@ -161,6 +162,7 @@ pub const Chunk = struct {
             .OP_NEGATE => return simple_instructoin("OP_NEGATE", offset),
             .OP_PRINT => return simple_instructoin("OP_PRINT", offset),
             .OP_JUMP => return self.jump_instruction("OP_JUMP", 1, offset),
+            .OP_JUMP_IF_NEQUAL => return self.jump_instruction("OP_JUMP_IF_NEQUAL", 1, offset),
             .OP_JUMP_IF_FALSE => return self.jump_instruction("OP_JUMP_IF_FALSE", 1, offset),
             .OP_JUMP_IF_TRUE => return self.jump_instruction("OP_JUMP_IF_TRUE", 1, offset),
             .OP_LOOP => return self.jump_instruction("OP_LOOP", -1, offset),

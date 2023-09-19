@@ -17,6 +17,7 @@ pub const TokenType = enum {
     // One or two character tokens.
     TOKEN_BANG,
     TOKEN_BANG_EQUAL,
+    TOKEN_COLON,
     TOKEN_EQUAL,
     TOKEN_EQUAL_EQUAL,
     TOKEN_GREATER,
@@ -145,7 +146,16 @@ pub const Scanner = struct {
     fn identifier_type(self: *Scanner) TokenType {
         switch (self.start[0]) {
             'a' => return self.check_keyword(1, "nd", .TOKEN_AND),
-            'c' => return self.check_keyword(1, "lass", .TOKEN_CLASS),
+            'c' => {
+                if (@intFromPtr(self.current) - @intFromPtr(self.start) > 1) {
+                    switch (self.start[1]) {
+                        'a' => return self.check_keyword(2, "se", .TOKEN_CASE),
+                        'l' => return self.check_keyword(2, "ass", .TOKEN_CLASS),
+                        else => return .TOKEN_IDENTIFIER,
+                    }
+                }
+            },
+            'd' => return self.check_keyword(1, "efault", .TOKEN_DEFAULT),
             'e' => return self.check_keyword(1, "lse", .TOKEN_ELSE),
             'f' => {
                 if (@intFromPtr(self.current) - @intFromPtr(self.start) > 1) {
@@ -162,7 +172,15 @@ pub const Scanner = struct {
             'o' => return self.check_keyword(1, "r", .TOKEN_OR),
             'p' => return self.check_keyword(1, "rint", .TOKEN_PRINT),
             'r' => return self.check_keyword(1, "eturn", .TOKEN_RETURN),
-            's' => return self.check_keyword(1, "uper", .TOKEN_SUPER),
+            's' => {
+                if (@intFromPtr(self.current) - @intFromPtr(self.start) > 1) {
+                    switch (self.start[1]) {
+                        'u' => return self.check_keyword(2, "per", .TOKEN_SUPER),
+                        'w' => return self.check_keyword(2, "itch", .TOKEN_SWITCH),
+                        else => return .TOKEN_IDENTIFIER,
+                    }
+                }
+            },
             't' => {
                 if (@intFromPtr(self.current) - @intFromPtr(self.start) > 1) {
                     switch (self.start[1]) {
@@ -222,6 +240,7 @@ pub const Scanner = struct {
             ')' => return self.make_token(.TOKEN_RIGHT_PAREN),
             '{' => return self.make_token(.TOKEN_LEFT_BRACE),
             '}' => return self.make_token(.TOKEN_RIGHT_BRACE),
+            ':' => return self.make_token(.TOKEN_COLON),
             ';' => return self.make_token(.TOKEN_SEMICOLON),
             ',' => return self.make_token(.TOKEN_COMMA),
             '.' => return self.make_token(.TOKEN_DOT),
