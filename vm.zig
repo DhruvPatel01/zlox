@@ -13,10 +13,33 @@ const STACK_MAX = 64 * 256;
 
 pub const InterpretError = error{ CompileError, RuntimeError };
 
+const CallFrame = struct {
+    function: *object.ObjFunction,
+    ip: [*]u8,
+    slots: [*]Value,
+
+    inline fn read_byte(frame: *CallFrame) u8 {
+        defer frame.ip += 1;
+        return frame.ip[0];
+    }
+
+    inline fn read_short(frame: *CallFrame) u16 {
+        defer frame.ip += 2;
+        return (@as(u16, frame.ip[0]) << 8) | frame.ip[1];
+    }
+
+    inline fn read_constant(frame: *CallFrame) Value {
+        return frame.function.chunk.values.items[frame.read_byte()];
+    }
+
+    inline fn read_string(frame: *CallFrame) *object.ObjString {
+        return @fieldParentPtr(object.ObjString, "obj", frame.read_constant().Obj);
+    }
+};
+
 pub const VM = struct {
-    frame_count: usize = 0,
-    chunk: *Chunk = undefined,
-    ip: [*]u8 = undefined,
+    frames: [MAX_FRAMES]CallFrame = undefined,
+    frame_count: u16 = 0,
     stack: [STACK_MAX]Value = undefined,
     stack_top: [*]Value = undefined,
     globals: Table = undefined,
@@ -26,15 +49,35 @@ pub const VM = struct {
 
 fn reset_stack() void {
     vm.stack_top = &vm.stack;
+    vm.frame_count = 0;
 }
 
-fn runtime_error(comptime fmt: []const u8, args: anytype) void {
+fn runtimeError(comptime fmt: []const u8, args: anytype) void {
     std.debug.print(fmt, args);
     std.debug.print("\n", .{});
-    const instruction = @intFromPtr(vm.ip) - @intFromPtr(vm.chunk.code.items.ptr) - 1;
-    const line = vm.chunk.lines.items[instruction];
-    std.debug.print("[line {}] in script\n", .{line});
+
+    var i: i32 = @as(i32, @intCast(vm.frame_count)) - 1;
+    while (i >= 0) : (i -= 1) {
+        const frame = &vm.frames[@intCast(i)];
+        const instruction = @intFromPtr(frame.ip) - @intFromPtr(frame.function.chunk.code.items.ptr) - 1;
+        const line = frame.function.chunk.lines.items[instruction];
+        std.debug.print("[line {}] in ", .{line});
+        if (frame.function.name == null) {
+            std.debug.print("script\n", .{});
+        } else {
+            std.debug.print("{s}()\n", .{frame.function.name.?.chars});
+        }
+    }
+
     reset_stack();
+}
+
+fn defineNative(name: []const u8, function: object.NativeFn) void {
+    push(Value{ .Obj = &object.ObjString.copy(name).obj });
+    push(Value{ .Obj = &object.ObjNative.allocate(function).obj });
+    _ = vm.globals.set(@fieldParentPtr(object.ObjString, "obj", peek(1).Obj), peek(0));
+    _ = pop();
+    _ = pop();
 }
 
 fn push(value: Value) void {
@@ -59,11 +102,51 @@ fn peek(distance: usize) Value {
     return ptr[0];
 }
 
+fn call(function: *object.ObjFunction, arg_count: u8) bool {
+    if (function.arity != arg_count) {
+        runtimeError("Expected {} arguments but got {}.", .{ function.arity, arg_count });
+        return false;
+    }
+
+    if (vm.frame_count == MAX_FRAMES) {
+        runtimeError("Stack overflow.", .{});
+        return false;
+    }
+    var frame = &vm.frames[vm.frame_count];
+    vm.frame_count += 1;
+    frame.function = function;
+    frame.ip = function.chunk.code.items.ptr;
+    frame.slots = vm.stack_top - arg_count - 1;
+    return true;
+}
+
+fn callValue(callee: Value, arg_count: u8) bool {
+    if (callee == .Obj) {
+        switch (callee.Obj.type) {
+            .OBJ_FUNCTION => {
+                return call(@fieldParentPtr(object.ObjFunction, "obj", callee.Obj), arg_count);
+            },
+            .OBJ_NATIVE => {
+                const func = @fieldParentPtr(object.ObjNative, "obj", callee.Obj).function;
+                const result = func(arg_count, vm.stack_top - arg_count);
+                vm.stack_top -= (arg_count + 1);
+                push(result);
+                return true;
+            },
+            else => {},
+        }
+    }
+    runtimeError("Can only call functions and classes.", .{});
+    return false;
+}
+
 pub fn init() void {
     reset_stack();
     vm.objects = null;
     vm.globals.init();
     vm.strings.init();
+
+    defineNative("clock", clockNative);
 }
 
 fn free_objects() void {
@@ -82,14 +165,14 @@ pub fn free() void {
 }
 
 pub fn interpret(source: []const u8) InterpretError!void {
-    var chunk = Chunk.init();
-    defer chunk.free();
+    const function = compiler.compile(source);
 
-    if (!compiler.compile(source, &chunk))
+    if (function == null)
         return error.CompileError;
 
-    vm.chunk = &chunk;
-    vm.ip = chunk.code.items.ptr;
+    push(Value{ .Obj = &function.?.obj });
+    _ = call(function.?, 0);
+
     return run();
 }
 
@@ -106,62 +189,63 @@ fn concatenate() void {
 }
 
 fn run() InterpretError!void {
+    var frame = &vm.frames[vm.frame_count - 1];
     while (true) {
         if (comptime common.debug_trace_execution) {
             std.debug.print("          ", .{});
-            const value_stack_total_len = @intFromPtr(vm.stack_top) - @intFromPtr(&vm.stack);
+            const value_stack_total_len = @intFromPtr(vm.stack_top) - @intFromPtr(frame.slots);
             const value_size: usize = @sizeOf(Value);
             const value_stack_len = value_stack_total_len / value_size;
 
             for (0..value_stack_len) |i| {
                 std.debug.print("[ ", .{});
-                vm.stack[i].print(std.io.getStdErr().writer(), false);
+                frame.slots[i].print(std.io.getStdErr().writer(), false);
                 std.debug.print(" ]", .{});
             }
             std.debug.print("\n", .{});
 
-            const top = @intFromPtr(vm.ip);
-            const base = @intFromPtr(vm.chunk.code.items.ptr);
-            _ = vm.chunk.disassemble_instruction(top - base);
+            const top = @intFromPtr(frame.ip);
+            const base = @intFromPtr(frame.function.chunk.code.items.ptr);
+            _ = frame.function.chunk.disassemble_instruction(top - base);
         }
-        var instruction: OpCode = @enumFromInt(read_byte());
+        var instruction: OpCode = @enumFromInt(frame.read_byte());
         switch (instruction) {
             .OP_CONSTANT => {
-                const constant = read_constant();
+                const constant = frame.read_constant();
                 push(constant);
             },
             .OP_NIL => push(Value.nil()),
             .OP_TRUE => push(Value.boolean(true)),
             .OP_FALSE => push(Value.boolean(false)),
             .OP_POP => _ = pop(),
-            .OP_POPN => popN(read_byte()),
+            .OP_POPN => popN(frame.read_byte()),
             .OP_GET_LOCAL => {
-                const slot = read_byte();
-                push(vm.stack[slot]);
+                const slot = frame.read_byte();
+                push(frame.slots[slot]);
             },
             .OP_SET_LOCAL => {
-                const slot = read_byte();
-                vm.stack[slot] = peek(0);
+                const slot = frame.read_byte();
+                frame.slots[slot] = peek(0);
             },
             .OP_DEFINE_GLOBAL => {
-                const name = read_string();
+                const name = frame.read_string();
                 _ = vm.globals.set(name, peek(0));
                 _ = pop();
             },
             .OP_GET_GLOBAL => {
-                const name = read_string();
+                const name = frame.read_string();
                 var value: Value = undefined;
                 if (!vm.globals.get(name, &value)) {
-                    runtime_error("Undefined variable '{s}'.", .{name.chars});
+                    runtimeError("Undefined variable '{s}'.", .{name.chars});
                     return error.RuntimeError;
                 }
                 push(value);
             },
             .OP_SET_GLOBAL => {
-                const name = read_string();
+                const name = frame.read_string();
                 if (vm.globals.set(name, peek(0))) {
                     _ = vm.globals.delete(name);
-                    runtime_error("Undefined variable '{s}'.", .{name.chars});
+                    runtimeError("Undefined variable '{s}'.", .{name.chars});
                     return error.RuntimeError;
                 }
             },
@@ -192,7 +276,7 @@ fn run() InterpretError!void {
                     const a = pop().Number;
                     push(Value.number(a + b));
                 } else {
-                    runtime_error("Operands must be two numbers or two strings.", .{});
+                    runtimeError("Operands must be two numbers or two strings.", .{});
                     return error.RuntimeError;
                 }
             },
@@ -205,7 +289,7 @@ fn run() InterpretError!void {
                 switch (ptr[0]) {
                     .Number => ptr[0].Number = -ptr[0].Number,
                     else => {
-                        runtime_error("Operand must be a number.", .{});
+                        runtimeError("Operand must be a number.", .{});
                         return error.RuntimeError;
                     },
                 }
@@ -215,39 +299,54 @@ fn run() InterpretError!void {
                 value.print(std.io.getStdOut().writer(), true);
             },
             .OP_JUMP => {
-                const offset = read_short();
-                vm.ip += offset;
+                const offset = frame.read_short();
+                frame.ip += offset;
             },
             .OP_JUMP_IF_NEQUAL => {
                 const b = pop();
-                const offset = read_short();
+                const offset = frame.read_short();
                 if (!peek(0).values_equal(b)) {
-                    vm.ip += offset;
+                    frame.ip += offset;
                 }
             },
             .OP_JUMP_IF_FALSE => {
-                const offset = read_short();
+                const offset = frame.read_short();
                 if (peek(0).is_falsy()) {
-                    vm.ip += offset;
+                    frame.ip += offset;
                 }
             },
             .OP_JUMP_IF_TRUE => {
-                const offset = read_short();
+                const offset = frame.read_short();
                 if (!peek(0).is_falsy()) {
-                    vm.ip += offset;
+                    frame.ip += offset;
                 }
             },
             .OP_LOOP => {
-                const offset = read_short();
-                vm.ip -= offset;
+                const offset = frame.read_short();
+                frame.ip -= offset;
             },
-            .OP_CALL => unreachable,
+            .OP_CALL => {
+                const arg_count = frame.read_byte();
+                if (!callValue(peek(arg_count), arg_count)) {
+                    return error.RuntimeError;
+                }
+                frame = &vm.frames[vm.frame_count - 1];
+            },
             .OP_INVOKE => unreachable,
             .OP_SUPER_INVOKE => unreachable,
             .OP_CLOSURE => unreachable,
             .OP_CLOSE_UPVALUE => unreachable,
             .OP_RETURN => {
-                return;
+                const result = pop();
+                vm.frame_count -= 1;
+                if (vm.frame_count == 0) {
+                    _ = pop();
+                    return;
+                }
+
+                vm.stack_top = frame.slots;
+                push(result);
+                frame = &vm.frames[vm.frame_count - 1];
             },
             .OP_CLASS => unreachable,
             .OP_INHERIT => unreachable,
@@ -256,27 +355,9 @@ fn run() InterpretError!void {
     }
 }
 
-inline fn read_byte() u8 {
-    defer vm.ip += 1;
-    return vm.ip[0];
-}
-
-inline fn read_short() u16 {
-    defer vm.ip += 2;
-    return (@as(u16, vm.ip[0]) << 8) | vm.ip[1];
-}
-
-inline fn read_constant() Value {
-    return vm.chunk.values.items[read_byte()];
-}
-
-inline fn read_string() *object.ObjString {
-    return @fieldParentPtr(object.ObjString, "obj", read_constant().Obj);
-}
-
 inline fn binary_op(comptime op: OpCode) InterpretError!void {
     if (peek(0) != Value.Number or peek(1) != Value.Number) {
-        runtime_error("Operands must be numbers.", .{});
+        runtimeError("Operands must be numbers.", .{});
         return error.RuntimeError;
     }
     const b = pop().Number;
@@ -297,3 +378,7 @@ inline fn binary_op(comptime op: OpCode) InterpretError!void {
 }
 
 pub var vm = VM{};
+
+fn clockNative(_: u8, _: [*]Value) Value {
+    return Value{ .Number = @floatFromInt(std.time.timestamp()) };
+}

@@ -4,6 +4,7 @@ const value_ = @import("value.zig");
 const Value = value_.Value;
 const common = @import("common.zig");
 const VM = @import("vm.zig");
+const Chunk = @import("chunk.zig").Chunk;
 
 pub const ObjType = enum {
     OBJ_BOUND_METHOD,
@@ -24,6 +25,8 @@ pub const Obj = struct {
         var obj = common.allocator.create(Type) catch unreachable;
         obj.obj.type = switch (Type) {
             ObjString => .OBJ_STRING,
+            ObjFunction => .OBJ_FUNCTION,
+            ObjNative => .OBJ_NATIVE,
             else => @compileError("Unknown type"),
         };
         obj.obj.next = VM.vm.objects;
@@ -38,27 +41,40 @@ pub const Obj = struct {
                 common.allocator.free(str_obj.chars);
                 common.allocator.destroy(str_obj);
             },
+            .OBJ_FUNCTION => {
+                const function = @fieldParentPtr(ObjFunction, "obj", obj);
+                function.chunk.free();
+                common.allocator.destroy(function);
+            },
+            .OBJ_NATIVE => {
+                const function = @fieldParentPtr(ObjNative, "obj", obj);
+                common.allocator.destroy(function);
+            },
             else => unreachable,
         }
     }
 
     pub fn print(obj: *Obj, writer: anytype, comptime newline: bool) !void {
+        switch (obj.type) {
+            .OBJ_STRING => {
+                const str_obj = @fieldParentPtr(ObjString, "obj", obj);
+                try writer.print("{s}", .{str_obj.chars});
+            },
+            .OBJ_FUNCTION => {
+                const function = @fieldParentPtr(ObjFunction, "obj", obj);
+                if (function.name == null) {
+                    try writer.print("<script>", .{});
+                } else {
+                    try writer.print("<fn {s}>", .{function.name.?.chars});
+                }
+            },
+            .OBJ_NATIVE => {
+                try writer.print("<native fn>", .{});
+            },
+            else => unreachable,
+        }
         if (newline) {
-            switch (obj.type) {
-                .OBJ_STRING => {
-                    const str_obj = @fieldParentPtr(ObjString, "obj", obj);
-                    try writer.print("{s}\n", .{str_obj.chars});
-                },
-                else => unreachable,
-            }
-        } else {
-            switch (obj.type) {
-                .OBJ_STRING => {
-                    const str_obj = @fieldParentPtr(ObjString, "obj", obj);
-                    try writer.print("{s}", .{str_obj.chars});
-                },
-                else => unreachable,
-            }
+            try writer.print("\n", .{});
         }
     }
 };
@@ -95,6 +111,33 @@ pub const ObjString = struct {
             return interned.?;
         }
         return allocate(chars, hash);
+    }
+};
+
+pub const ObjFunction = struct {
+    obj: Obj,
+    arity: u16 = 0,
+    chunk: Chunk,
+    name: ?*ObjString = null,
+
+    pub fn allocate() *ObjFunction {
+        var obj = Obj.allocate(ObjFunction);
+        obj.arity = 0;
+        obj.name = null;
+        obj.chunk.init();
+        return obj;
+    }
+};
+
+pub const NativeFn = *const fn (arg_count: u8, args: [*]Value) Value;
+pub const ObjNative = struct {
+    obj: Obj,
+    function: NativeFn,
+
+    pub fn allocate(function: NativeFn) *ObjNative {
+        var obj = Obj.allocate(ObjNative);
+        obj.function = function;
+        return obj;
     }
 };
 

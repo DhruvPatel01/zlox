@@ -46,23 +46,43 @@ const Local = struct {
     depth: i32,
 };
 
+const FunctionType = enum(u1) {
+    TYPE_FUNCTION,
+    TYPE_SCRIPT,
+};
+
 const Compiler = struct {
+    enclosing: *Compiler = undefined,
+    function: ?*object_.ObjFunction = null,
+    function_type: FunctionType = .TYPE_SCRIPT,
     locals: [256]Local = undefined,
-    local_count: u8 = 0,
+    local_count: u16 = 0,
     scope_depth: i32 = 0,
 
-    fn init(self: *Compiler) void {
+    fn init(self: *Compiler, typ: FunctionType) void {
+        self.enclosing = current;
+        self.function_type = typ;
+
+        var func = object_.ObjFunction.allocate();
+        self.function = func;
+
         current = self;
+        if (typ != .TYPE_SCRIPT) {
+            current.function.?.name = object_.ObjString.copy(parser.previous.lexeme);
+        }
+        var local = self.locals[self.local_count];
+        self.local_count += 1;
+        local.depth = 0;
+        local.name.lexeme = "";
     }
 };
 
 var parser: Parser = undefined;
 var scanner: Scanner = undefined;
 var current: *Compiler = undefined;
-var compiling_chunk: *Chunk = undefined;
 
 inline fn current_chunk() *Chunk {
-    return compiling_chunk;
+    return &current.function.?.chunk;
 }
 
 fn error_at(token: scanner_.Token, msg: []const u8) void {
@@ -146,6 +166,7 @@ inline fn emitJump(op: OpCode) usize {
 }
 
 inline fn emit_return() void {
+    emit_op(.OP_NIL);
     emit_op(.OP_RETURN);
 }
 
@@ -172,12 +193,15 @@ fn patchJump(offset: usize) void {
     current_chunk().code.items[offset + 1] = @truncate(jump);
 }
 
-fn end_compiler() void {
+fn end_compiler() *object_.ObjFunction {
     emit_return();
-    if (common.debug_print_code) {
+    const func = current.function.?;
+    if (comptime common.debug_print_code) {
         if (!parser.had_error)
-            current_chunk().disassemble("code");
+            current_chunk().disassemble(if (func.name == null) "script" else func.name.?.chars);
     }
+    current = current.enclosing;
+    return func;
 }
 
 inline fn beginScope() void {
@@ -231,6 +255,12 @@ fn binary(can_assign: bool) void {
         .TOKEN_SLASH => emit_op(.OP_DIVIDE),
         else => unreachable,
     }
+}
+
+fn call(_: bool) void {
+    const arg_count = argumentList();
+    emit_op(.OP_CALL);
+    emit_byte(arg_count);
 }
 
 fn literal(_: bool) void {
@@ -309,7 +339,7 @@ fn unary(_: bool) void {
 fn make_rules() [@typeInfo(TokenType).Enum.fields.len]ParseRule {
     var arr_: [@typeInfo(TokenType).Enum.fields.len]ParseRule = undefined;
 
-    arr_[@intFromEnum(TokenType.TOKEN_LEFT_PAREN)] = ParseRule{ .prefix = grouping };
+    arr_[@intFromEnum(TokenType.TOKEN_LEFT_PAREN)] = ParseRule{ .prefix = grouping, .infix = call, .precedence = .PREC_CALL };
     arr_[@intFromEnum(TokenType.TOKEN_RIGHT_PAREN)] = ParseRule{};
     arr_[@intFromEnum(TokenType.TOKEN_LEFT_BRACE)] = ParseRule{};
     arr_[@intFromEnum(TokenType.TOKEN_RIGHT_BRACE)] = ParseRule{};
@@ -386,7 +416,7 @@ fn identifierConstant(name: *const Token) u8 {
 
 fn addLocal(name: Token) void {
     if (current.local_count == 256) {
-        error_("Too many local variables in a function.");
+        error_("Too many local variables in function.");
         return;
     }
     var local = &current.locals[current.local_count];
@@ -423,6 +453,7 @@ fn parseVariable(errorMsg: []const u8) u8 {
 }
 
 fn markInitialized() void {
+    if (current.scope_depth == 0) return;
     current.locals[current.local_count - 1].depth = current.scope_depth;
 }
 
@@ -433,6 +464,23 @@ fn defineVariable(global: u8) void {
     }
     emit_op(.OP_DEFINE_GLOBAL);
     emit_byte(global);
+}
+
+fn argumentList() u8 {
+    var arg_count: u8 = 0;
+    if (!check(.TOKEN_RIGHT_PAREN)) {
+        while (true) {
+            expression();
+            if (arg_count == 255) {
+                error_("Can't have more than 255 arguments.");
+            } else {
+                arg_count += 1;
+            }
+            if (!match(.TOKEN_COMMA)) break;
+        }
+    }
+    consume(.TOKEN_RIGHT_PAREN, "Expect ')' after arguments.");
+    return arg_count;
 }
 
 fn and_(_: bool) void {
@@ -453,6 +501,39 @@ fn block() void {
         declaration();
     }
     consume(.TOKEN_RIGHT_BRACE, "Expect '}' after block.");
+}
+
+fn function(typ: FunctionType) void {
+    var compiler = Compiler{};
+    compiler.init(typ);
+
+    beginScope();
+    consume(.TOKEN_LEFT_PAREN, "Expect '(' after function name.");
+    if (!check(.TOKEN_RIGHT_PAREN)) {
+        while (true) {
+            current.function.?.arity += 1;
+            if (current.function.?.arity > 255) {
+                error_at_current("Can't have more than 255 parameters.");
+            }
+            const param = parseVariable("Expect parameter name.");
+            defineVariable(param);
+            if (!match(.TOKEN_COMMA)) break;
+        }
+    }
+    consume(.TOKEN_RIGHT_PAREN, "Expect ')' after parameters.");
+    consume(.TOKEN_LEFT_BRACE, "Expect '{' before function body.");
+    block();
+
+    const func = end_compiler();
+    emit_op(.OP_CONSTANT);
+    emit_byte(make_constant(Value{ .Obj = &func.obj }));
+}
+
+fn functionDeclaration() void {
+    const global = parseVariable("Expect function name.");
+    markInitialized();
+    function(.TYPE_FUNCTION);
+    defineVariable(global);
 }
 
 fn varDeclaration() void {
@@ -537,6 +618,20 @@ fn printStatement() void {
     emit_op(.OP_PRINT);
 }
 
+fn returnStatement() void {
+    if (current.function_type == .TYPE_SCRIPT) {
+        error_("Can't return from top-level code.");
+    }
+
+    if (match(.TOKEN_SEMICOLON)) {
+        emit_return();
+    } else {
+        expression();
+        consume(.TOKEN_SEMICOLON, "Expect ';' after return value.");
+        emit_op(.OP_RETURN);
+    }
+}
+
 fn whileStatement() void {
     const loop_start = current_chunk().code.items.len;
     consume(.TOKEN_LEFT_PAREN, "Expect '(' after 'while'.");
@@ -609,6 +704,8 @@ fn synchronize() void {
 fn declaration() void {
     if (match(.TOKEN_VAR)) {
         varDeclaration();
+    } else if (match(.TOKEN_FUN)) {
+        functionDeclaration();
     } else {
         statement();
     }
@@ -625,6 +722,8 @@ fn statement() void {
         forStatement();
     } else if (match(.TOKEN_IF)) {
         ifStatement();
+    } else if (match(.TOKEN_RETURN)) {
+        returnStatement();
     } else if (match(.TOKEN_WHILE)) {
         whileStatement();
     } else if (match(.TOKEN_SWITCH)) {
@@ -638,13 +737,12 @@ fn statement() void {
     }
 }
 
-pub fn compile(source: []const u8, chunk: *Chunk) bool {
+pub fn compile(source: []const u8) ?*object_.ObjFunction {
     scanner.init(source);
 
     var compiler = Compiler{};
-    compiler.init();
+    compiler.init(.TYPE_SCRIPT);
 
-    compiling_chunk = chunk;
     parser.had_error = false;
     parser.panic_mode = false;
 
@@ -653,6 +751,10 @@ pub fn compile(source: []const u8, chunk: *Chunk) bool {
     while (!match(.TOKEN_EOF)) {
         declaration();
     }
-    end_compiler();
-    return !parser.had_error;
+    const func = end_compiler();
+    if (parser.had_error) {
+        return null;
+    } else {
+        return func;
+    }
 }

@@ -70,15 +70,13 @@ pub const Chunk = struct {
     lines: std.ArrayList(u32),
     values: std.ArrayList(Value),
 
-    pub fn init() Self {
+    pub fn init(self: *Self) void {
         errdefer {
             exit(1);
         }
-        return Self{
-            .code = try std.ArrayList(u8).initCapacity(allocator, 32),
-            .lines = try std.ArrayList(u32).initCapacity(allocator, 32),
-            .values = try std.ArrayList(Value).initCapacity(allocator, 8),
-        };
+        self.code = try std.ArrayList(u8).initCapacity(allocator, 32);
+        self.lines = try std.ArrayList(u32).initCapacity(allocator, 32);
+        self.values = try std.ArrayList(Value).initCapacity(allocator, 8);
     }
 
     pub fn write_op(self: *Self, code: OpCode, line: u32) void {
@@ -97,7 +95,7 @@ pub const Chunk = struct {
         try self.lines.append(line);
     }
 
-    pub fn add_const(self: *Self, value: Value) u8 {
+    pub fn add_const(self: *Self, value: Value) u16 {
         errdefer {
             exit(1);
         }
@@ -166,7 +164,7 @@ pub const Chunk = struct {
             .OP_JUMP_IF_FALSE => return self.jump_instruction("OP_JUMP_IF_FALSE", 1, offset),
             .OP_JUMP_IF_TRUE => return self.jump_instruction("OP_JUMP_IF_TRUE", 1, offset),
             .OP_LOOP => return self.jump_instruction("OP_LOOP", -1, offset),
-            .OP_CALL => unreachable,
+            .OP_CALL => return self.byte_instruction("OP_CALL", offset),
             .OP_INVOKE => unreachable,
             .OP_SUPER_INVOKE => unreachable,
             .OP_CLOSURE => unreachable,
