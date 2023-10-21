@@ -2,6 +2,7 @@ const std = @import("std");
 const print = std.debug.print;
 
 const common = @import("common.zig");
+const object = @import("object.zig");
 const Value = @import("value.zig").Value;
 const Allocator = std.mem.Allocator;
 const exit = @import("std").os.exit;
@@ -141,8 +142,8 @@ pub const Chunk = struct {
             .OP_DEFINE_GLOBAL => return self.constant_instruction("OP_DEFINE_GLOBAL", offset),
             .OP_GET_GLOBAL => return self.constant_instruction("OP_GET_GLOBAL", offset),
             .OP_SET_GLOBAL => return self.constant_instruction("OP_SET_GLOBAL", offset),
-            .OP_SET_UPVALUE => unreachable,
-            .OP_GET_UPVALUE => unreachable,
+            .OP_SET_UPVALUE => return self.byte_instruction("OP_SET_UPVALUE", offset),
+            .OP_GET_UPVALUE => return self.byte_instruction("OP_GET_UPVALUE", offset),
             .OP_SET_PROPERTY => unreachable,
             .OP_GET_PROPERTY => unreachable,
             .OP_GET_SUPER => unreachable,
@@ -167,8 +168,22 @@ pub const Chunk = struct {
             .OP_CALL => return self.byte_instruction("OP_CALL", offset),
             .OP_INVOKE => unreachable,
             .OP_SUPER_INVOKE => unreachable,
-            .OP_CLOSURE => unreachable,
-            .OP_CLOSE_UPVALUE => unreachable,
+            .OP_CLOSURE => {
+                const constant = self.code.items[offset + 1];
+                print("{s:<16} {d:4} '", .{ "OP_CLOSURE", constant });
+                self.values.items[constant].print(std.io.getStdErr().writer(), false);
+                print("'\n", .{});
+
+                const function = @fieldParentPtr(object.ObjFunction, "obj", self.values.items[constant].Obj);
+                var j: u16 = 0;
+                while (j < 2 * @as(u16, function.upvalue_count)) : (j += 2) {
+                    const str = if (self.code.items[offset + j + 2] == 1) "local" else "upvalue";
+                    const index = self.code.items[offset + j + 3];
+                    print("{d:4}      |                     {s} {d}\n", .{ offset, str, index });
+                }
+                return offset + 2 + j;
+            },
+            .OP_CLOSE_UPVALUE => return simple_instructoin("OP_CLOSE_UPVALUE", offset),
             .OP_RETURN => return simple_instructoin("OP_RETURN", offset),
             .OP_CLASS => unreachable,
             .OP_INHERIT => unreachable,

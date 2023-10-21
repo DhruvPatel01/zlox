@@ -25,8 +25,10 @@ pub const Obj = struct {
         var obj = common.allocator.create(Type) catch unreachable;
         obj.obj.type = switch (Type) {
             ObjString => .OBJ_STRING,
+            ObjClosure => .OBJ_CLOSURE,
             ObjFunction => .OBJ_FUNCTION,
             ObjNative => .OBJ_NATIVE,
+            ObjUpvalue => .OBJ_UPVALUE,
             else => @compileError("Unknown type"),
         };
         obj.obj.next = VM.vm.objects;
@@ -41,6 +43,10 @@ pub const Obj = struct {
                 common.allocator.free(str_obj.chars);
                 common.allocator.destroy(str_obj);
             },
+            .OBJ_UPVALUE => {
+                const upvalue = @fieldParentPtr(ObjUpvalue, "obj", obj);
+                common.allocator.destroy(upvalue);
+            },
             .OBJ_FUNCTION => {
                 const function = @fieldParentPtr(ObjFunction, "obj", obj);
                 function.chunk.free();
@@ -49,6 +55,11 @@ pub const Obj = struct {
             .OBJ_NATIVE => {
                 const function = @fieldParentPtr(ObjNative, "obj", obj);
                 common.allocator.destroy(function);
+            },
+            .OBJ_CLOSURE => {
+                const closure = @fieldParentPtr(ObjClosure, "obj", obj);
+                common.allocator.free(closure.upvalues);
+                common.allocator.destroy(closure);
             },
             else => unreachable,
         }
@@ -59,6 +70,13 @@ pub const Obj = struct {
             .OBJ_STRING => {
                 const str_obj = @fieldParentPtr(ObjString, "obj", obj);
                 try writer.print("{s}", .{str_obj.chars});
+            },
+            .OBJ_UPVALUE => {
+                try writer.print("upvalue", .{});
+            },
+            .OBJ_CLOSURE => {
+                const closure = @fieldParentPtr(ObjClosure, "obj", obj);
+                try print(&closure.function.obj, writer, false);
             },
             .OBJ_FUNCTION => {
                 const function = @fieldParentPtr(ObjFunction, "obj", obj);
@@ -114,15 +132,48 @@ pub const ObjString = struct {
     }
 };
 
+pub const ObjUpvalue = struct {
+    obj: Obj,
+    location: *Value,
+    closed: Value,
+    next: ?*ObjUpvalue,
+
+    pub fn allocate(value: *Value) *ObjUpvalue {
+        var upvalue = Obj.allocate(ObjUpvalue);
+        upvalue.location = value;
+        upvalue.next = null;
+        upvalue.closed = Value.Nil;
+        return upvalue;
+    }
+};
+
+pub const ObjClosure = struct {
+    obj: Obj,
+    function: *ObjFunction,
+    upvalues: []*ObjUpvalue,
+    upvalue_count: u16,
+
+    pub fn allocate(function: *ObjFunction) *ObjClosure {
+        var upvalues = common.allocator.alloc(*ObjUpvalue, function.upvalue_count) catch unreachable;
+        var closure = Obj.allocate(ObjClosure);
+        closure.function = function;
+        closure.upvalues = upvalues;
+        closure.upvalue_count = function.upvalue_count;
+        return closure;
+    }
+};
+
 pub const ObjFunction = struct {
     obj: Obj,
     arity: u16 = 0,
+    upvalue_count: u16 = 0,
     chunk: Chunk,
     name: ?*ObjString = null,
 
     pub fn allocate() *ObjFunction {
         var obj = Obj.allocate(ObjFunction);
         obj.arity = 0;
+        obj.upvalue_count = 0;
         obj.name = null;
         obj.chunk.init();
         return obj;

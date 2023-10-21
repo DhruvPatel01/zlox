@@ -14,7 +14,7 @@ const STACK_MAX = 64 * 256;
 pub const InterpretError = error{ CompileError, RuntimeError };
 
 const CallFrame = struct {
-    function: *object.ObjFunction,
+    closure: *object.ObjClosure,
     ip: [*]u8,
     slots: [*]Value,
 
@@ -29,7 +29,7 @@ const CallFrame = struct {
     }
 
     inline fn read_constant(frame: *CallFrame) Value {
-        return frame.function.chunk.values.items[frame.read_byte()];
+        return frame.closure.function.chunk.values.items[frame.read_byte()];
     }
 
     inline fn read_string(frame: *CallFrame) *object.ObjString {
@@ -44,6 +44,7 @@ pub const VM = struct {
     stack_top: [*]Value = undefined,
     globals: Table = undefined,
     strings: Table = undefined,
+    open_upvalues: ?*object.ObjUpvalue = null,
     objects: ?*object.Obj = null,
 };
 
@@ -59,13 +60,13 @@ fn runtimeError(comptime fmt: []const u8, args: anytype) void {
     var i: i32 = @as(i32, @intCast(vm.frame_count)) - 1;
     while (i >= 0) : (i -= 1) {
         const frame = &vm.frames[@intCast(i)];
-        const instruction = @intFromPtr(frame.ip) - @intFromPtr(frame.function.chunk.code.items.ptr) - 1;
-        const line = frame.function.chunk.lines.items[instruction];
+        const instruction = @intFromPtr(frame.ip) - @intFromPtr(frame.closure.function.chunk.code.items.ptr) - 1;
+        const line = frame.closure.function.chunk.lines.items[instruction];
         std.debug.print("[line {}] in ", .{line});
-        if (frame.function.name == null) {
+        if (frame.closure.function.name == null) {
             std.debug.print("script\n", .{});
         } else {
-            std.debug.print("{s}()\n", .{frame.function.name.?.chars});
+            std.debug.print("{s}()\n", .{frame.closure.function.name.?.chars});
         }
     }
 
@@ -102,9 +103,9 @@ fn peek(distance: usize) Value {
     return ptr[0];
 }
 
-fn call(function: *object.ObjFunction, arg_count: u8) bool {
-    if (function.arity != arg_count) {
-        runtimeError("Expected {} arguments but got {}.", .{ function.arity, arg_count });
+fn call(closure: *object.ObjClosure, arg_count: u8) bool {
+    if (closure.function.arity != arg_count) {
+        runtimeError("Expected {} arguments but got {}.", .{ closure.function.arity, arg_count });
         return false;
     }
 
@@ -114,8 +115,8 @@ fn call(function: *object.ObjFunction, arg_count: u8) bool {
     }
     var frame = &vm.frames[vm.frame_count];
     vm.frame_count += 1;
-    frame.function = function;
-    frame.ip = function.chunk.code.items.ptr;
+    frame.closure = closure;
+    frame.ip = closure.function.chunk.code.items.ptr;
     frame.slots = vm.stack_top - arg_count - 1;
     return true;
 }
@@ -123,8 +124,8 @@ fn call(function: *object.ObjFunction, arg_count: u8) bool {
 fn callValue(callee: Value, arg_count: u8) bool {
     if (callee == .Obj) {
         switch (callee.Obj.type) {
-            .OBJ_FUNCTION => {
-                return call(@fieldParentPtr(object.ObjFunction, "obj", callee.Obj), arg_count);
+            .OBJ_CLOSURE => {
+                return call(@fieldParentPtr(object.ObjClosure, "obj", callee.Obj), arg_count);
             },
             .OBJ_NATIVE => {
                 const func = @fieldParentPtr(object.ObjNative, "obj", callee.Obj).function;
@@ -140,11 +141,43 @@ fn callValue(callee: Value, arg_count: u8) bool {
     return false;
 }
 
+fn captureUpvalue(local: *Value) *object.ObjUpvalue {
+    var prev_upvalue: ?*object.ObjUpvalue = null;
+    var upvalue = vm.open_upvalues;
+    while (upvalue != null and @intFromPtr(local) < @intFromPtr(upvalue.?.location)) {
+        prev_upvalue = upvalue;
+        upvalue = upvalue.?.next;
+    }
+
+    if (upvalue != null and @intFromPtr(local) == @intFromPtr(upvalue.?.location)) {
+        return upvalue.?;
+    }
+
+    const created_upvalue = object.ObjUpvalue.allocate(local);
+    created_upvalue.next = upvalue;
+    if (prev_upvalue == null) {
+        vm.open_upvalues = created_upvalue;
+    } else {
+        prev_upvalue.?.next = created_upvalue;
+    }
+    return created_upvalue;
+}
+
+fn closeUpvalues(last: [*]Value) void {
+    while (vm.open_upvalues != null and @intFromPtr(vm.open_upvalues.?.location) >= @intFromPtr(last)) {
+        var upvalue = vm.open_upvalues.?;
+        vm.open_upvalues = upvalue.next;
+        upvalue.closed = upvalue.location.*;
+        upvalue.location = &upvalue.closed;
+    }
+}
+
 pub fn init() void {
     reset_stack();
     vm.objects = null;
     vm.globals.init();
     vm.strings.init();
+    vm.open_upvalues = null;
 
     defineNative("clock", clockNative);
 }
@@ -171,7 +204,10 @@ pub fn interpret(source: []const u8) InterpretError!void {
         return error.CompileError;
 
     push(Value{ .Obj = &function.?.obj });
-    _ = call(function.?, 0);
+    const closure = object.ObjClosure.allocate(function.?);
+    _ = pop();
+    push(Value{ .Obj = &closure.obj });
+    _ = call(closure, 0);
 
     return run();
 }
@@ -205,8 +241,8 @@ fn run() InterpretError!void {
             std.debug.print("\n", .{});
 
             const top = @intFromPtr(frame.ip);
-            const base = @intFromPtr(frame.function.chunk.code.items.ptr);
-            _ = frame.function.chunk.disassemble_instruction(top - base);
+            const base = @intFromPtr(frame.closure.function.chunk.code.items.ptr);
+            _ = frame.closure.function.chunk.disassemble_instruction(top - base);
         }
         var instruction: OpCode = @enumFromInt(frame.read_byte());
         switch (instruction) {
@@ -249,8 +285,14 @@ fn run() InterpretError!void {
                     return error.RuntimeError;
                 }
             },
-            .OP_SET_UPVALUE => unreachable,
-            .OP_GET_UPVALUE => unreachable,
+            .OP_SET_UPVALUE => {
+                const slot = frame.read_byte();
+                frame.closure.upvalues[slot].location.* = peek(0);
+            },
+            .OP_GET_UPVALUE => {
+                const slot = frame.read_byte();
+                push(frame.closure.upvalues[slot].location.*);
+            },
             .OP_SET_PROPERTY => unreachable,
             .OP_GET_PROPERTY => unreachable,
             .OP_GET_SUPER => unreachable,
@@ -334,10 +376,28 @@ fn run() InterpretError!void {
             },
             .OP_INVOKE => unreachable,
             .OP_SUPER_INVOKE => unreachable,
-            .OP_CLOSURE => unreachable,
-            .OP_CLOSE_UPVALUE => unreachable,
+            .OP_CLOSURE => {
+                const function = @fieldParentPtr(object.ObjFunction, "obj", frame.read_constant().Obj);
+                const closure = object.ObjClosure.allocate(function);
+                push(Value{ .Obj = &closure.obj });
+
+                for (closure.upvalues) |*upvalue| {
+                    const is_local = frame.read_byte();
+                    const index = frame.read_byte();
+                    if (is_local == 1) {
+                        upvalue.* = captureUpvalue(&frame.slots[index]);
+                    } else {
+                        upvalue.* = frame.closure.upvalues[index];
+                    }
+                }
+            },
+            .OP_CLOSE_UPVALUE => {
+                closeUpvalues(vm.stack_top - 1);
+                _ = pop();
+            },
             .OP_RETURN => {
                 const result = pop();
+                closeUpvalues(frame.slots);
                 vm.frame_count -= 1;
                 if (vm.frame_count == 0) {
                     _ = pop();

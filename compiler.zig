@@ -44,6 +44,12 @@ const ParseRule = struct {
 const Local = struct {
     name: Token,
     depth: i32,
+    is_captured: bool,
+};
+
+pub const UpValue = struct {
+    index: u16,
+    is_local: bool,
 };
 
 const FunctionType = enum(u1) {
@@ -52,11 +58,12 @@ const FunctionType = enum(u1) {
 };
 
 const Compiler = struct {
-    enclosing: *Compiler = undefined,
+    enclosing: ?*Compiler = null,
     function: ?*object_.ObjFunction = null,
     function_type: FunctionType = .TYPE_SCRIPT,
     locals: [256]Local = undefined,
     local_count: u16 = 0,
+    upvalues: [256]UpValue = undefined,
     scope_depth: i32 = 0,
 
     fn init(self: *Compiler, typ: FunctionType) void {
@@ -73,6 +80,7 @@ const Compiler = struct {
         var local = self.locals[self.local_count];
         self.local_count += 1;
         local.depth = 0;
+        local.is_captured = false;
         local.name.lexeme = "";
     }
 };
@@ -200,7 +208,7 @@ fn end_compiler() *object_.ObjFunction {
         if (!parser.had_error)
             current_chunk().disassemble(if (func.name == null) "script" else func.name.?.chars);
     }
-    current = current.enclosing;
+    if (current.enclosing != null) current = current.enclosing.?;
     return func;
 }
 
@@ -210,15 +218,13 @@ inline fn beginScope() void {
 
 inline fn endScope() void {
     current.scope_depth -= 1;
-    var pop_n: u8 = 0;
-    var i = @as(i32, current.local_count) - 1;
-    while (i >= 0 and current.locals[@intCast(i)].depth > current.scope_depth) : (i -= 1) {
-        pop_n += 1;
-    }
-    current.local_count -= pop_n;
-    if (pop_n > 0) {
-        emit_op(.OP_POPN);
-        emit_byte(pop_n);
+    while (current.local_count > 0 and current.locals[current.local_count - 1].depth > current.scope_depth) {
+        if (current.locals[current.local_count - 1].is_captured) {
+            emit_op(.OP_CLOSE_UPVALUE);
+        } else {
+            emit_op(.OP_POP);
+        }
+        current.local_count -= 1;
     }
 }
 
@@ -232,6 +238,41 @@ fn resolveLocal(compiler: *Compiler, token: *const Token) ?u8 {
             }
             return @intCast(i);
         }
+    }
+    return null;
+}
+
+fn addUpValue(compiler: *Compiler, index: u8, is_local: bool) u8 {
+    const upvalue_count = compiler.function.?.upvalue_count;
+    var i: u16 = 0;
+    while (i < upvalue_count) : (i += 1) {
+        const upvalue = &compiler.upvalues[i];
+        if (upvalue.index == index and upvalue.is_local == is_local) return @intCast(i);
+    }
+
+    if (upvalue_count == 256) {
+        error_("Too many closure variables in function.");
+        return 0;
+    }
+
+    var upvalue = &compiler.upvalues[compiler.function.?.upvalue_count];
+    upvalue.index = index;
+    upvalue.is_local = is_local;
+    defer compiler.function.?.upvalue_count += 1;
+    return @intCast(compiler.function.?.upvalue_count);
+}
+
+fn resolveUpValue(compiler: *Compiler, token: *const Token) ?u8 {
+    if (compiler.enclosing == null) return null;
+    const local = resolveLocal(compiler.enclosing.?, token);
+    if (local != null) {
+        compiler.enclosing.?.locals[@intCast(local.?)].is_captured = true;
+        return addUpValue(compiler, local.?, true);
+    }
+
+    const upvalue = resolveUpValue(compiler.enclosing.?, token);
+    if (upvalue != null) {
+        return addUpValue(compiler, upvalue.?, false);
     }
     return null;
 }
@@ -305,9 +346,15 @@ fn namedVariable(name: Token, can_assign: bool) void {
         set_op = .OP_SET_LOCAL;
         get_op = .OP_GET_LOCAL;
     } else {
-        arg = identifierConstant(&name);
-        set_op = .OP_SET_GLOBAL;
-        get_op = .OP_GET_GLOBAL;
+        arg = resolveUpValue(current, &name);
+        if (arg != null) {
+            set_op = .OP_SET_UPVALUE;
+            get_op = .OP_GET_UPVALUE;
+        } else {
+            arg = identifierConstant(&name);
+            set_op = .OP_SET_GLOBAL;
+            get_op = .OP_GET_GLOBAL;
+        }
     }
 
     if (can_assign and match(.TOKEN_EQUAL)) {
@@ -422,6 +469,7 @@ fn addLocal(name: Token) void {
     var local = &current.locals[current.local_count];
     current.local_count += 1;
     local.name = name;
+    local.is_captured = false;
     local.depth = -1;
 }
 
@@ -525,8 +573,14 @@ fn function(typ: FunctionType) void {
     block();
 
     const func = end_compiler();
-    emit_op(.OP_CONSTANT);
+    emit_op(.OP_CLOSURE);
     emit_byte(make_constant(Value{ .Obj = &func.obj }));
+
+    var i: u16 = 0;
+    while (i < func.upvalue_count) : (i += 1) {
+        emit_byte(if (compiler.upvalues[i].is_local) 1 else 0);
+        emit_byte(@intCast(compiler.upvalues[i].index));
+    }
 }
 
 fn functionDeclaration() void {
@@ -742,6 +796,7 @@ pub fn compile(source: []const u8) ?*object_.ObjFunction {
 
     var compiler = Compiler{};
     compiler.init(.TYPE_SCRIPT);
+    compiler.enclosing = null;
 
     parser.had_error = false;
     parser.panic_mode = false;

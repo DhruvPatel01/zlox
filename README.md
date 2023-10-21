@@ -1,7 +1,7 @@
 # TODO
-
-[x] Take care of proper stdin, stdout, stderr, instead of printing anywhere.
+- [x] Take care of proper stdin, stdout, stderr, instead of printing anywhere.
+- [ ] ip optimization (ch24 exercises)
 
 # Complete files
-[x] chunk.zig
-[x] scanner.zig
+- [X] chunk.zig
+- [X] scanner.zig
