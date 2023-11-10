@@ -134,4 +134,13 @@ pub const Table = struct {
             index = (index + 1) % self.capacity;
         }
     }
+
+    pub fn removeWhite(self: *Table) void {
+        for (0..self.capacity) |i| {
+            const entry = &self.entries[i];
+            if (entry.key != null and !entry.key.?.obj.is_marked) {
+                _ = self.delete(entry.key.?);
+            }
+        }
+    }
 };

@@ -3,6 +3,7 @@ const print = std.debug.print;
 
 const common = @import("common.zig");
 const object = @import("object.zig");
+const vm = @import("vm.zig");
 const Value = @import("value.zig").Value;
 const Allocator = std.mem.Allocator;
 const exit = @import("std").os.exit;
@@ -72,12 +73,9 @@ pub const Chunk = struct {
     values: std.ArrayList(Value),
 
     pub fn init(self: *Self) void {
-        errdefer {
-            exit(1);
-        }
-        self.code = try std.ArrayList(u8).initCapacity(allocator, 32);
-        self.lines = try std.ArrayList(u32).initCapacity(allocator, 32);
-        self.values = try std.ArrayList(Value).initCapacity(allocator, 8);
+        self.code = std.ArrayList(u8).init(allocator);
+        self.lines = std.ArrayList(u32).init(allocator);
+        self.values = std.ArrayList(Value).init(allocator);
     }
 
     pub fn write_op(self: *Self, code: OpCode, line: u32) void {
@@ -97,10 +95,9 @@ pub const Chunk = struct {
     }
 
     pub fn add_const(self: *Self, value: Value) u16 {
-        errdefer {
-            exit(1);
-        }
-        try self.values.append(value);
+        vm.push(value);
+        self.values.append(value) catch unreachable;
+        _ = vm.pop();
         return @intCast(self.values.items.len - 1);
     }
 

@@ -19,6 +19,7 @@ pub const ObjType = enum {
 
 pub const Obj = struct {
     type: ObjType,
+    is_marked: bool,
     next: ?*Obj = null,
 
     fn allocate(comptime Type: type) *Type {
@@ -31,12 +32,19 @@ pub const Obj = struct {
             ObjUpvalue => .OBJ_UPVALUE,
             else => @compileError("Unknown type"),
         };
+        obj.obj.is_marked = false;
         obj.obj.next = VM.vm.objects;
         VM.vm.objects = &obj.obj;
+
+        if (comptime common.debug_log_gc)
+            std.debug.print("{*} allocate {}\n", .{ obj, @sizeOf(Type) });
         return obj;
     }
 
     pub fn free_object(obj: *Obj) void {
+        if (comptime common.debug_log_gc)
+            std.debug.print("{*} free {}\n", .{ obj, obj.type });
+
         switch (obj.type) {
             .OBJ_STRING => {
                 const str_obj = @fieldParentPtr(ObjString, "obj", obj);
@@ -89,7 +97,10 @@ pub const Obj = struct {
             .OBJ_NATIVE => {
                 try writer.print("<native fn>", .{});
             },
-            else => unreachable,
+            else => {
+                std.debug.print("Unhandled type {}\n", .{obj.type});
+                unreachable;
+            },
         }
         if (newline) {
             try writer.print("\n", .{});
@@ -106,7 +117,9 @@ pub const ObjString = struct {
         var obj = Obj.allocate(ObjString);
         obj.chars = chars;
         obj.hash = hash;
+        VM.push(.{ .Obj = &obj.obj }); //garbage collection may be triggered next
         _ = VM.vm.strings.set(obj, Value.Nil);
+        _ = VM.pop();
         return obj;
     }
 
@@ -150,11 +163,12 @@ pub const ObjUpvalue = struct {
 pub const ObjClosure = struct {
     obj: Obj,
     function: *ObjFunction,
-    upvalues: []*ObjUpvalue,
+    upvalues: []?*ObjUpvalue,
     upvalue_count: u16,
 
     pub fn allocate(function: *ObjFunction) *ObjClosure {
-        var upvalues = common.allocator.alloc(*ObjUpvalue, function.upvalue_count) catch unreachable;
+        var upvalues = common.allocator.alloc(?*ObjUpvalue, function.upvalue_count) catch unreachable;
+        for (upvalues) |*upvalue| upvalue.* = null;
         var closure = Obj.allocate(ObjClosure);
         closure.function = function;
         closure.upvalues = upvalues;
@@ -175,7 +189,7 @@ pub const ObjFunction = struct {
         obj.arity = 0;
         obj.upvalue_count = 0;
         obj.name = null;
-        obj.chunk.init();
+        obj.chunk.init(); // doesn't allocate any memory
         return obj;
     }
 };

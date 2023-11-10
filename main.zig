@@ -26,9 +26,9 @@ fn repl() void {
 }
 
 fn run_file(path: [*:0]const u8) void {
-    const source_status = std.fs.cwd().readFileAlloc(common.allocator, std.mem.span(path), std.math.maxInt(u32));
+    const source_status = std.fs.cwd().readFileAlloc(std.heap.c_allocator, std.mem.span(path), std.math.maxInt(u32));
     if (source_status) |source| {
-        defer common.allocator.free(source);
+        defer std.heap.c_allocator.free(source);
         vm.interpret(source) catch |err| switch (err) {
             InterpreterError.CompileError => {
                 std.os.exit(65);

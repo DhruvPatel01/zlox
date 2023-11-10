@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const object = @import("object.zig");
+const gc = @import("gc.zig");
 const Chunk = @import("chunk.zig").Chunk;
 const OpCode = @import("chunk.zig").OpCode;
 const Value = @import("value.zig").Value;
@@ -46,6 +47,7 @@ pub const VM = struct {
     strings: Table = undefined,
     open_upvalues: ?*object.ObjUpvalue = null,
     objects: ?*object.Obj = null,
+    gray_stack: std.ArrayList(*object.Obj) = undefined,
 };
 
 fn reset_stack() void {
@@ -81,21 +83,18 @@ fn defineNative(name: []const u8, function: object.NativeFn) void {
     _ = pop();
 }
 
-fn push(value: Value) void {
+pub fn push(value: Value) void {
     vm.stack_top[0] = value;
     vm.stack_top += 1;
 }
 
-fn pop() Value {
+pub fn pop() Value {
     vm.stack_top -= 1;
     return vm.stack_top[0];
 }
 
 fn popN(n: u8) void {
-    for (0..n) |_| {
-        _ = pop();
-    }
-    // vm.stack_top -= n;
+    vm.stack_top -= n;
 }
 
 fn peek(distance: usize) Value {
@@ -175,6 +174,7 @@ fn closeUpvalues(last: [*]Value) void {
 pub fn init() void {
     reset_stack();
     vm.objects = null;
+    vm.gray_stack = std.ArrayList(*object.Obj).init(gc.arena_allocator);
     vm.globals.init();
     vm.strings.init();
     vm.open_upvalues = null;
@@ -189,6 +189,8 @@ fn free_objects() void {
         obj.?.free_object();
         obj = next;
     }
+
+    vm.gray_stack.shrinkAndFree(0);
 }
 
 pub fn free() void {
@@ -213,14 +215,15 @@ pub fn interpret(source: []const u8) InterpretError!void {
 }
 
 fn concatenate() void {
-    const b = @fieldParentPtr(object.ObjString, "obj", pop().Obj);
-    const a = @fieldParentPtr(object.ObjString, "obj", pop().Obj);
+    const b = @fieldParentPtr(object.ObjString, "obj", peek(0).Obj);
+    const a = @fieldParentPtr(object.ObjString, "obj", peek(1).Obj);
 
     var final = common.allocator.alloc(u8, a.chars.len + b.chars.len) catch unreachable;
     @memcpy(final[0..a.chars.len], a.chars);
     @memcpy(final[a.chars.len..], b.chars);
 
     const result = Value{ .Obj = &object.ObjString.take(final).obj };
+    popN(2);
     push(result);
 }
 
@@ -287,11 +290,11 @@ fn run() InterpretError!void {
             },
             .OP_SET_UPVALUE => {
                 const slot = frame.read_byte();
-                frame.closure.upvalues[slot].location.* = peek(0);
+                frame.closure.upvalues[slot].?.location.* = peek(0);
             },
             .OP_GET_UPVALUE => {
                 const slot = frame.read_byte();
-                push(frame.closure.upvalues[slot].location.*);
+                push(frame.closure.upvalues[slot].?.location.*);
             },
             .OP_SET_PROPERTY => unreachable,
             .OP_GET_PROPERTY => unreachable,

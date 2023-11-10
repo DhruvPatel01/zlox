@@ -11,6 +11,8 @@ const OpCode = chunk_.OpCode;
 const value_ = @import("value.zig");
 const Value = value_.Value;
 const object_ = @import("object.zig");
+const gc_ = @import("gc.zig");
+const vm = @import("vm.zig");
 
 const Parser = struct {
     current: scanner_.Token,
@@ -75,9 +77,9 @@ const Compiler = struct {
 
         current = self;
         if (typ != .TYPE_SCRIPT) {
-            current.function.?.name = object_.ObjString.copy(parser.previous.lexeme);
+            current.?.function.?.name = object_.ObjString.copy(parser.previous.lexeme);
         }
-        var local = self.locals[self.local_count];
+        var local = &self.locals[self.local_count];
         self.local_count += 1;
         local.depth = 0;
         local.is_captured = false;
@@ -87,10 +89,10 @@ const Compiler = struct {
 
 var parser: Parser = undefined;
 var scanner: Scanner = undefined;
-var current: *Compiler = undefined;
+var current: ?*Compiler = null;
 
 inline fn current_chunk() *Chunk {
-    return &current.function.?.chunk;
+    return &current.?.function.?.chunk;
 }
 
 fn error_at(token: scanner_.Token, msg: []const u8) void {
@@ -203,28 +205,28 @@ fn patchJump(offset: usize) void {
 
 fn end_compiler() *object_.ObjFunction {
     emit_return();
-    const func = current.function.?;
+    const func = current.?.function.?;
     if (comptime common.debug_print_code) {
         if (!parser.had_error)
             current_chunk().disassemble(if (func.name == null) "script" else func.name.?.chars);
     }
-    if (current.enclosing != null) current = current.enclosing.?;
+    current = current.?.enclosing;
     return func;
 }
 
 inline fn beginScope() void {
-    current.scope_depth += 1;
+    current.?.scope_depth += 1;
 }
 
 inline fn endScope() void {
-    current.scope_depth -= 1;
-    while (current.local_count > 0 and current.locals[current.local_count - 1].depth > current.scope_depth) {
-        if (current.locals[current.local_count - 1].is_captured) {
+    current.?.scope_depth -= 1;
+    while (current.?.local_count > 0 and current.?.locals[current.?.local_count - 1].depth > current.?.scope_depth) {
+        if (current.?.locals[current.?.local_count - 1].is_captured) {
             emit_op(.OP_CLOSE_UPVALUE);
         } else {
             emit_op(.OP_POP);
         }
-        current.local_count -= 1;
+        current.?.local_count -= 1;
     }
 }
 
@@ -334,19 +336,22 @@ fn or_(_: bool) void {
 
 fn string(_: bool) void {
     const sub_obj = object_.ObjString.copy(parser.previous.lexeme[1 .. parser.previous.lexeme.len - 1]);
-    emit_constant(Value{ .Obj = &sub_obj.obj });
+    const constant = Value{ .Obj = &sub_obj.obj };
+    vm.push(constant);
+    emit_constant(constant);
+    _ = vm.pop();
 }
 
 fn namedVariable(name: Token, can_assign: bool) void {
     var set_op: OpCode = undefined;
     var get_op: OpCode = undefined;
 
-    var arg = resolveLocal(current, &name);
+    var arg = resolveLocal(current.?, &name);
     if (arg != null) {
         set_op = .OP_SET_LOCAL;
         get_op = .OP_GET_LOCAL;
     } else {
-        arg = resolveUpValue(current, &name);
+        arg = resolveUpValue(current.?, &name);
         if (arg != null) {
             set_op = .OP_SET_UPVALUE;
             get_op = .OP_GET_UPVALUE;
@@ -462,25 +467,25 @@ fn identifierConstant(name: *const Token) u8 {
 }
 
 fn addLocal(name: Token) void {
-    if (current.local_count == 256) {
+    if (current.?.local_count == 256) {
         error_("Too many local variables in function.");
         return;
     }
-    var local = &current.locals[current.local_count];
-    current.local_count += 1;
+    var local = &current.?.locals[current.?.local_count];
+    current.?.local_count += 1;
     local.name = name;
     local.is_captured = false;
     local.depth = -1;
 }
 
 fn declareVariable() void {
-    if (current.scope_depth == 0) return;
+    if (current.?.scope_depth == 0) return;
 
     const name = &parser.previous;
-    var i = @as(i32, current.local_count) - 1;
+    var i = @as(i32, current.?.local_count) - 1;
     while (i >= 0) : (i -= 1) {
-        var local = &current.locals[@intCast(i)];
-        if (local.depth != -1 and local.depth < current.scope_depth) {
+        var local = &current.?.locals[@intCast(i)];
+        if (local.depth != -1 and local.depth < current.?.scope_depth) {
             break;
         }
 
@@ -495,18 +500,18 @@ fn parseVariable(errorMsg: []const u8) u8 {
     consume(.TOKEN_IDENTIFIER, errorMsg);
 
     declareVariable();
-    if (current.scope_depth > 0) return 0;
+    if (current.?.scope_depth > 0) return 0;
 
     return identifierConstant(&parser.previous);
 }
 
 fn markInitialized() void {
-    if (current.scope_depth == 0) return;
-    current.locals[current.local_count - 1].depth = current.scope_depth;
+    if (current.?.scope_depth == 0) return;
+    current.?.locals[current.?.local_count - 1].depth = current.?.scope_depth;
 }
 
 fn defineVariable(global: u8) void {
-    if (current.scope_depth > 0) {
+    if (current.?.scope_depth > 0) {
         markInitialized();
         return;
     }
@@ -559,8 +564,8 @@ fn function(typ: FunctionType) void {
     consume(.TOKEN_LEFT_PAREN, "Expect '(' after function name.");
     if (!check(.TOKEN_RIGHT_PAREN)) {
         while (true) {
-            current.function.?.arity += 1;
-            if (current.function.?.arity > 255) {
+            current.?.function.?.arity += 1;
+            if (current.?.function.?.arity > 255) {
                 error_at_current("Can't have more than 255 parameters.");
             }
             const param = parseVariable("Expect parameter name.");
@@ -573,8 +578,9 @@ fn function(typ: FunctionType) void {
     block();
 
     const func = end_compiler();
+    const constant = make_constant(Value{ .Obj = &func.obj }); // reachable by gc
     emit_op(.OP_CLOSURE);
-    emit_byte(make_constant(Value{ .Obj = &func.obj }));
+    emit_byte(constant);
 
     var i: u16 = 0;
     while (i < func.upvalue_count) : (i += 1) {
@@ -673,7 +679,7 @@ fn printStatement() void {
 }
 
 fn returnStatement() void {
-    if (current.function_type == .TYPE_SCRIPT) {
+    if (current.?.function_type == .TYPE_SCRIPT) {
         error_("Can't return from top-level code.");
     }
 
@@ -795,8 +801,8 @@ pub fn compile(source: []const u8) ?*object_.ObjFunction {
     scanner.init(source);
 
     var compiler = Compiler{};
-    compiler.init(.TYPE_SCRIPT);
     compiler.enclosing = null;
+    compiler.init(.TYPE_SCRIPT);
 
     parser.had_error = false;
     parser.panic_mode = false;
@@ -811,5 +817,12 @@ pub fn compile(source: []const u8) ?*object_.ObjFunction {
         return null;
     } else {
         return func;
+    }
+}
+
+pub fn markCompilerRoots() void {
+    var compiler: ?*Compiler = current;
+    while (compiler != null) : (compiler = compiler.?.enclosing) {
+        gc_.markObject(&compiler.?.function.?.obj);
     }
 }
