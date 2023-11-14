@@ -180,22 +180,31 @@ fn blackenObject(object: *obj.Obj) void {
 
     switch (object.type) {
         .OBJ_STRING, .OBJ_NATIVE => {},
+        .OBJ_INSTANCE => {
+            const instance = object.downcast(obj.ObjInstance);
+            markObject(&instance.klass.obj);
+            markTable(&instance.fields);
+        },
         .OBJ_UPVALUE => {
-            const upvalue: *obj.ObjUpvalue = @fieldParentPtr(obj.ObjUpvalue, "obj", object);
+            const upvalue: *obj.ObjUpvalue = object.downcast(obj.ObjUpvalue);
             markValue(upvalue.closed);
         },
         .OBJ_FUNCTION => {
-            const function: *obj.ObjFunction = @fieldParentPtr(obj.ObjFunction, "obj", object);
+            const function: *obj.ObjFunction = object.downcast(obj.ObjFunction);
             if (function.name != null)
                 markObject(&function.name.?.obj);
             markArray(function.chunk.values.items);
         },
         .OBJ_CLOSURE => {
-            const closure: *obj.ObjClosure = @fieldParentPtr(obj.ObjClosure, "obj", object);
+            const closure: *obj.ObjClosure = object.downcast(obj.ObjClosure);
             markObject(&closure.function.obj);
             for (closure.upvalues) |upvalue| {
                 if (upvalue != null) markObject(&upvalue.?.obj);
             }
+        },
+        .OBJ_CLASS => {
+            const klass = object.downcast(obj.ObjClass);
+            markObject(&klass.name.obj);
         },
         else => unreachable,
     }

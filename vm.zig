@@ -34,7 +34,7 @@ const CallFrame = struct {
     }
 
     inline fn read_string(frame: *CallFrame) *object.ObjString {
-        return @fieldParentPtr(object.ObjString, "obj", frame.read_constant().Obj);
+        return frame.read_constant().Obj.downcast(object.ObjString);
     }
 };
 
@@ -123,11 +123,17 @@ fn call(closure: *object.ObjClosure, arg_count: u8) bool {
 fn callValue(callee: Value, arg_count: u8) bool {
     if (callee == .Obj) {
         switch (callee.Obj.type) {
+            .OBJ_CLASS => {
+                const klass = callee.Obj.downcast(object.ObjClass);
+                var stack_position = vm.stack_top - arg_count - 1;
+                stack_position[0] = .{ .Obj = &object.ObjInstance.allocate(klass).obj };
+                return true;
+            },
             .OBJ_CLOSURE => {
-                return call(@fieldParentPtr(object.ObjClosure, "obj", callee.Obj), arg_count);
+                return call(callee.Obj.downcast(object.ObjClosure), arg_count);
             },
             .OBJ_NATIVE => {
-                const func = @fieldParentPtr(object.ObjNative, "obj", callee.Obj).function;
+                const func = callee.Obj.downcast(object.ObjNative).function;
                 const result = func(arg_count, vm.stack_top - arg_count);
                 vm.stack_top -= (arg_count + 1);
                 push(result);
@@ -296,8 +302,38 @@ fn run() InterpretError!void {
                 const slot = frame.read_byte();
                 push(frame.closure.upvalues[slot].?.location.*);
             },
-            .OP_SET_PROPERTY => unreachable,
-            .OP_GET_PROPERTY => unreachable,
+            .OP_SET_PROPERTY => {
+                const obj = peek(1);
+
+                if (obj != .Obj or obj.Obj.type != .OBJ_INSTANCE) {
+                    runtimeError("Only instances have fields.", .{});
+                    return error.RuntimeError;
+                }
+
+                var instance = obj.Obj.downcast(object.ObjInstance);
+                _ = instance.fields.set(frame.read_string(), peek(0));
+                const value = pop();
+                _ = pop();
+                push(value);
+            },
+            .OP_GET_PROPERTY => {
+                const obj = peek(0);
+                if (obj != .Obj or obj.Obj.type != .OBJ_INSTANCE) {
+                    runtimeError("Only instances have properties.", .{});
+                    return error.RuntimeError;
+                }
+
+                const instance = obj.Obj.downcast(object.ObjInstance);
+                const name = frame.read_string();
+
+                var value: Value = undefined;
+                if (!instance.fields.get(name, &value)) {
+                    runtimeError("Undefined property '{s}'.", .{name.chars});
+                    return error.RuntimeError;
+                }
+                _ = pop(); //instance
+                push(value);
+            },
             .OP_GET_SUPER => unreachable,
             .OP_EQUAL => {
                 const b = pop();
@@ -411,7 +447,9 @@ fn run() InterpretError!void {
                 push(result);
                 frame = &vm.frames[vm.frame_count - 1];
             },
-            .OP_CLASS => unreachable,
+            .OP_CLASS => {
+                push(Value{ .Obj = &object.ObjClass.allocate(frame.read_string()).obj });
+            },
             .OP_INHERIT => unreachable,
             .OP_METHOD => unreachable,
         }

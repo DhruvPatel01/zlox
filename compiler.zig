@@ -306,6 +306,20 @@ fn call(_: bool) void {
     emit_byte(arg_count);
 }
 
+fn dot(can_assign: bool) void {
+    consume(.TOKEN_IDENTIFIER, "Expect property name after '.'.");
+    const name = identifierConstant(&parser.previous);
+
+    if (can_assign and match(.TOKEN_EQUAL)) {
+        expression();
+        emit_op(.OP_SET_PROPERTY);
+        emit_byte(name);
+    } else {
+        emit_op(.OP_GET_PROPERTY);
+        emit_byte(name);
+    }
+}
+
 fn literal(_: bool) void {
     switch (parser.previous.type) {
         .TOKEN_NIL => emit_op(.OP_NIL),
@@ -396,7 +410,7 @@ fn make_rules() [@typeInfo(TokenType).Enum.fields.len]ParseRule {
     arr_[@intFromEnum(TokenType.TOKEN_LEFT_BRACE)] = ParseRule{};
     arr_[@intFromEnum(TokenType.TOKEN_RIGHT_BRACE)] = ParseRule{};
     arr_[@intFromEnum(TokenType.TOKEN_COMMA)] = ParseRule{};
-    arr_[@intFromEnum(TokenType.TOKEN_DOT)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_DOT)] = ParseRule{ .infix = dot, .precedence = .PREC_CALL };
     arr_[@intFromEnum(TokenType.TOKEN_MINUS)] = ParseRule{ .prefix = unary, .infix = binary, .precedence = .PREC_TERM };
     arr_[@intFromEnum(TokenType.TOKEN_PLUS)] = ParseRule{ .infix = binary, .precedence = .PREC_TERM };
     arr_[@intFromEnum(TokenType.TOKEN_SEMICOLON)] = ParseRule{};
@@ -589,6 +603,18 @@ fn function(typ: FunctionType) void {
     }
 }
 
+fn classDeclaration() void {
+    consume(.TOKEN_IDENTIFIER, "Expect class name.");
+    const name_constant = identifierConstant(&parser.previous);
+    declareVariable();
+    emit_op(.OP_CLASS);
+    emit_byte(name_constant);
+    defineVariable(name_constant);
+
+    consume(.TOKEN_LEFT_BRACE, "Expect '{' before class body.");
+    consume(.TOKEN_RIGHT_BRACE, "Expect '}' after class body.");
+}
+
 fn functionDeclaration() void {
     const global = parseVariable("Expect function name.");
     markInitialized();
@@ -762,7 +788,9 @@ fn synchronize() void {
 }
 
 fn declaration() void {
-    if (match(.TOKEN_VAR)) {
+    if (match(.TOKEN_CLASS)) {
+        classDeclaration();
+    } else if (match(.TOKEN_VAR)) {
         varDeclaration();
     } else if (match(.TOKEN_FUN)) {
         functionDeclaration();

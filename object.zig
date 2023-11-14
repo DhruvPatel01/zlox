@@ -5,6 +5,7 @@ const Value = value_.Value;
 const common = @import("common.zig");
 const VM = @import("vm.zig");
 const Chunk = @import("chunk.zig").Chunk;
+const Table = @import("table.zig").Table;
 
 pub const ObjType = enum {
     OBJ_BOUND_METHOD,
@@ -18,6 +19,8 @@ pub const ObjType = enum {
 };
 
 pub const Obj = struct {
+    const Self = @This();
+
     type: ObjType,
     is_marked: bool,
     next: ?*Obj = null,
@@ -27,6 +30,8 @@ pub const Obj = struct {
         obj.obj.type = switch (Type) {
             ObjString => .OBJ_STRING,
             ObjClosure => .OBJ_CLOSURE,
+            ObjClass => .OBJ_CLASS,
+            ObjInstance => .OBJ_INSTANCE,
             ObjFunction => .OBJ_FUNCTION,
             ObjNative => .OBJ_NATIVE,
             ObjUpvalue => .OBJ_UPVALUE,
@@ -41,53 +46,70 @@ pub const Obj = struct {
         return obj;
     }
 
-    pub fn free_object(obj: *Obj) void {
-        if (comptime common.debug_log_gc)
-            std.debug.print("{*} free {}\n", .{ obj, obj.type });
+    pub inline fn downcast(self: *Self, comptime Type: type) *Type {
+        return @fieldParentPtr(Type, "obj", self);
+    }
 
-        switch (obj.type) {
+    pub fn free_object(self: *Obj) void {
+        if (comptime common.debug_log_gc)
+            std.debug.print("{*} free {}\n", .{ self, self.type });
+
+        switch (self.type) {
             .OBJ_STRING => {
-                const str_obj = @fieldParentPtr(ObjString, "obj", obj);
+                const str_obj = self.downcast(ObjString);
                 common.allocator.free(str_obj.chars);
                 common.allocator.destroy(str_obj);
             },
             .OBJ_UPVALUE => {
-                const upvalue = @fieldParentPtr(ObjUpvalue, "obj", obj);
+                const upvalue = self.downcast(ObjUpvalue);
                 common.allocator.destroy(upvalue);
             },
             .OBJ_FUNCTION => {
-                const function = @fieldParentPtr(ObjFunction, "obj", obj);
+                const function = self.downcast(ObjFunction);
                 function.chunk.free();
                 common.allocator.destroy(function);
             },
             .OBJ_NATIVE => {
-                const function = @fieldParentPtr(ObjNative, "obj", obj);
+                const function = self.downcast(ObjNative);
                 common.allocator.destroy(function);
             },
             .OBJ_CLOSURE => {
-                const closure = @fieldParentPtr(ObjClosure, "obj", obj);
+                const closure = self.downcast(ObjClosure);
                 common.allocator.free(closure.upvalues);
                 common.allocator.destroy(closure);
+            },
+            .OBJ_CLASS => {
+                const klass = self.downcast(ObjClass);
+                common.allocator.destroy(klass);
+            },
+            .OBJ_INSTANCE => {
+                const instance = self.downcast(ObjInstance);
+                instance.fields.free();
+                common.allocator.destroy(instance);
             },
             else => unreachable,
         }
     }
 
-    pub fn print(obj: *Obj, writer: anytype, comptime newline: bool) !void {
-        switch (obj.type) {
+    pub fn print(self: *Obj, writer: anytype, comptime newline: bool) !void {
+        switch (self.type) {
             .OBJ_STRING => {
-                const str_obj = @fieldParentPtr(ObjString, "obj", obj);
+                const str_obj = self.downcast(ObjString);
                 try writer.print("{s}", .{str_obj.chars});
             },
             .OBJ_UPVALUE => {
                 try writer.print("upvalue", .{});
             },
             .OBJ_CLOSURE => {
-                const closure = @fieldParentPtr(ObjClosure, "obj", obj);
+                const closure = self.downcast(ObjClosure);
                 try print(&closure.function.obj, writer, false);
             },
+            .OBJ_CLASS => {
+                const klass = self.downcast(ObjClass);
+                try writer.print("{s}", .{klass.name.chars});
+            },
             .OBJ_FUNCTION => {
-                const function = @fieldParentPtr(ObjFunction, "obj", obj);
+                const function = self.downcast(ObjFunction);
                 if (function.name == null) {
                     try writer.print("<script>", .{});
                 } else {
@@ -97,8 +119,11 @@ pub const Obj = struct {
             .OBJ_NATIVE => {
                 try writer.print("<native fn>", .{});
             },
+            .OBJ_INSTANCE => {
+                try writer.print("{s} instance", .{self.downcast(ObjInstance).klass.name.chars});
+            },
             else => {
-                std.debug.print("Unhandled type {}\n", .{obj.type});
+                std.debug.print("Unhandled type {}\n", .{self.type});
                 unreachable;
             },
         }
@@ -174,6 +199,30 @@ pub const ObjClosure = struct {
         closure.upvalues = upvalues;
         closure.upvalue_count = function.upvalue_count;
         return closure;
+    }
+};
+
+pub const ObjClass = struct {
+    obj: Obj,
+    name: *ObjString,
+
+    pub fn allocate(name: *ObjString) *ObjClass {
+        var klass = Obj.allocate(ObjClass);
+        klass.name = name;
+        return klass;
+    }
+};
+
+pub const ObjInstance = struct {
+    obj: Obj,
+    klass: *ObjClass,
+    fields: Table,
+
+    pub fn allocate(klass: *ObjClass) *ObjInstance {
+        var instance = Obj.allocate(ObjInstance);
+        instance.fields.init();
+        instance.klass = klass;
+        return instance;
     }
 };
 
