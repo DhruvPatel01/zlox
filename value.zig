@@ -4,6 +4,8 @@ const object = @import("object.zig");
 const Obj = object.Obj;
 
 pub const Value = union(enum) {
+    const Self = @This();
+
     Bool: bool,
     Nil: void,
     Number: f64,
@@ -57,5 +59,13 @@ pub const Value = union(enum) {
                 return a_str == b_str;
             }, // for now we only have string objects. Will need to revisit this in future.
         };
+    }
+
+    pub inline fn as(self: *Self, comptime T: type) *T {
+        return self.Obj.downcast(T);
+    }
+
+    pub inline fn is(self: *Self, typ: object.ObjType) bool {
+        return (self.* == .Obj and self.Obj.type == typ);
     }
 };

@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const object = @import("object.zig");
+const ObjType = object.ObjType;
 const gc = @import("gc.zig");
 const Chunk = @import("chunk.zig").Chunk;
 const OpCode = @import("chunk.zig").OpCode;
@@ -45,6 +46,7 @@ pub const VM = struct {
     stack_top: [*]Value = undefined,
     globals: Table = undefined,
     strings: Table = undefined,
+    init_string: ?*object.ObjString = null,
     open_upvalues: ?*object.ObjUpvalue = null,
     objects: ?*object.Obj = null,
     gray_stack: std.ArrayList(*object.Obj) = undefined,
@@ -123,10 +125,23 @@ fn call(closure: *object.ObjClosure, arg_count: u8) bool {
 fn callValue(callee: Value, arg_count: u8) bool {
     if (callee == .Obj) {
         switch (callee.Obj.type) {
+            .OBJ_BOUND_METHOD => {
+                const bound = callee.Obj.downcast(object.ObjBoundMethod);
+                var stack_position = vm.stack_top - arg_count - 1;
+                stack_position[0] = bound.receiver;
+                return call(bound.method, arg_count);
+            },
             .OBJ_CLASS => {
                 const klass = callee.Obj.downcast(object.ObjClass);
                 var stack_position = vm.stack_top - arg_count - 1;
                 stack_position[0] = .{ .Obj = &object.ObjInstance.allocate(klass).obj };
+                var initializer: Value = undefined;
+                if (klass.methods.get(vm.init_string.?, &initializer)) {
+                    return call(initializer.Obj.downcast(object.ObjClosure), arg_count);
+                } else if (arg_count != 0) {
+                    runtimeError("Expected 0 arguments but got {}.", .{arg_count});
+                    return false;
+                }
                 return true;
             },
             .OBJ_CLOSURE => {
@@ -144,6 +159,44 @@ fn callValue(callee: Value, arg_count: u8) bool {
     }
     runtimeError("Can only call functions and classes.", .{});
     return false;
+}
+
+fn invokeFromClass(class: *object.ObjClass, name: *object.ObjString, arg_count: u8) bool {
+    var method: Value = undefined;
+    if (!class.methods.get(name, &method)) {
+        runtimeError("Undefined property '{s}'.", .{name.chars});
+        return false;
+    }
+    return call(method.Obj.downcast(object.ObjClosure), arg_count);
+}
+
+fn invoke(name: *object.ObjString, arg_count: u8) bool {
+    var receiver = peek(arg_count);
+    if (!receiver.is(.OBJ_INSTANCE)) {
+        runtimeError("Only instances have methods.", .{});
+        return false;
+    }
+
+    var instance = receiver.as(object.ObjInstance);
+
+    var value: Value = undefined;
+    if (instance.fields.get(name, &value)) {
+        (vm.stack_top - arg_count - 1)[0] = value;
+        return callValue(value, arg_count);
+    }
+    return invokeFromClass(instance.klass, name, arg_count);
+}
+fn bindMethod(klass: *object.ObjClass, name: *object.ObjString) bool {
+    var method: Value = undefined;
+    if (!klass.methods.get(name, &method)) {
+        runtimeError("Undefined property '{s}'.", .{name.chars});
+        return false;
+    }
+
+    const bound = object.ObjBoundMethod.allocate(peek(0), method.Obj.downcast(object.ObjClosure));
+    _ = pop();
+    push(.{ .Obj = &bound.obj });
+    return true;
 }
 
 fn captureUpvalue(local: *Value) *object.ObjUpvalue {
@@ -177,12 +230,21 @@ fn closeUpvalues(last: [*]Value) void {
     }
 }
 
+fn defineMethod(name: *object.ObjString) void {
+    const method = peek(0);
+    var klass = peek(1).Obj.downcast(object.ObjClass);
+    _ = klass.methods.set(name, method);
+    _ = pop();
+}
+
 pub fn init() void {
     reset_stack();
     vm.objects = null;
     vm.gray_stack = std.ArrayList(*object.Obj).init(gc.arena_allocator);
     vm.globals.init();
     vm.strings.init();
+    vm.init_string = null; //next line may trigger gc, which reads this field
+    vm.init_string = object.ObjString.copy("init");
     vm.open_upvalues = null;
 
     defineNative("clock", clockNative);
@@ -202,6 +264,7 @@ fn free_objects() void {
 pub fn free() void {
     vm.globals.free();
     vm.strings.free();
+    vm.init_string = null;
     free_objects();
 }
 
@@ -325,14 +388,13 @@ fn run() InterpretError!void {
 
                 const instance = obj.Obj.downcast(object.ObjInstance);
                 const name = frame.read_string();
-
                 var value: Value = undefined;
-                if (!instance.fields.get(name, &value)) {
-                    runtimeError("Undefined property '{s}'.", .{name.chars});
+                if (instance.fields.get(name, &value)) {
+                    _ = pop(); //instance
+                    push(value);
+                } else if (!bindMethod(instance.klass, name)) {
                     return error.RuntimeError;
                 }
-                _ = pop(); //instance
-                push(value);
             },
             .OP_GET_SUPER => unreachable,
             .OP_EQUAL => {
@@ -413,7 +475,14 @@ fn run() InterpretError!void {
                 }
                 frame = &vm.frames[vm.frame_count - 1];
             },
-            .OP_INVOKE => unreachable,
+            .OP_INVOKE => {
+                const method = frame.read_string();
+                const arg_count = frame.read_byte();
+                if (!invoke(method, arg_count)) {
+                    return error.RuntimeError;
+                }
+                frame = &vm.frames[vm.frame_count - 1];
+            },
             .OP_SUPER_INVOKE => unreachable,
             .OP_CLOSURE => {
                 const function = @fieldParentPtr(object.ObjFunction, "obj", frame.read_constant().Obj);
@@ -451,7 +520,7 @@ fn run() InterpretError!void {
                 push(Value{ .Obj = &object.ObjClass.allocate(frame.read_string()).obj });
             },
             .OP_INHERIT => unreachable,
-            .OP_METHOD => unreachable,
+            .OP_METHOD => defineMethod(frame.read_string()),
         }
     }
 }

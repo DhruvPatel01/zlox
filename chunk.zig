@@ -163,7 +163,7 @@ pub const Chunk = struct {
             .OP_JUMP_IF_TRUE => return self.jump_instruction("OP_JUMP_IF_TRUE", 1, offset),
             .OP_LOOP => return self.jump_instruction("OP_LOOP", -1, offset),
             .OP_CALL => return self.byte_instruction("OP_CALL", offset),
-            .OP_INVOKE => unreachable,
+            .OP_INVOKE => return self.invokeInstruction("OP_INVOKE", offset),
             .OP_SUPER_INVOKE => unreachable,
             .OP_CLOSURE => {
                 const constant = self.code.items[offset + 1];
@@ -184,7 +184,7 @@ pub const Chunk = struct {
             .OP_RETURN => return simple_instructoin("OP_RETURN", offset),
             .OP_CLASS => return self.constant_instruction("OP_CLASS", offset),
             .OP_INHERIT => unreachable,
-            .OP_METHOD => unreachable,
+            .OP_METHOD => return self.constant_instruction("OP_METHOD", offset),
         }
     }
 
@@ -199,6 +199,15 @@ pub const Chunk = struct {
         self.values.items[constant].print(std.io.getStdErr().writer(), false);
         print("'\n", .{});
         return offset + 2;
+    }
+
+    fn invokeInstruction(self: *const Self, name: []const u8, offset: usize) usize {
+        const constant = self.code[offset + 1];
+        const arg_count = self.code[offset + 2];
+        print("{s:<16} ({d} args) {d:4} '", .{ name, arg_count, constant });
+        self.values.items[constant].print(std.io.getStdErr().writer(), false);
+        print("'\n", .{});
+        return offset + 3;
     }
 
     fn byte_instruction(self: *const Self, name: []const u8, offset: usize) usize {

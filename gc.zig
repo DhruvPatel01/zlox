@@ -104,6 +104,8 @@ fn markRoots() void {
 
     markTable(&vm_.vm.globals);
     compiler.markCompilerRoots();
+    if (vm_.vm.init_string != null) // TODO: "this" shouldn't be checked every time. Make it static!
+        markObject(&vm_.vm.init_string.?.obj);
 }
 
 fn markTable(table: *table_.Table) void {
@@ -185,6 +187,11 @@ fn blackenObject(object: *obj.Obj) void {
             markObject(&instance.klass.obj);
             markTable(&instance.fields);
         },
+        .OBJ_BOUND_METHOD => {
+            const method_obj = object.downcast(obj.ObjBoundMethod);
+            markValue(method_obj.receiver);
+            markObject(&method_obj.method.obj);
+        },
         .OBJ_UPVALUE => {
             const upvalue: *obj.ObjUpvalue = object.downcast(obj.ObjUpvalue);
             markValue(upvalue.closed);
@@ -204,8 +211,8 @@ fn blackenObject(object: *obj.Obj) void {
         },
         .OBJ_CLASS => {
             const klass = object.downcast(obj.ObjClass);
+            markTable(&klass.methods);
             markObject(&klass.name.obj);
         },
-        else => unreachable,
     }
 }

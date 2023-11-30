@@ -35,6 +35,7 @@ pub const Obj = struct {
             ObjFunction => .OBJ_FUNCTION,
             ObjNative => .OBJ_NATIVE,
             ObjUpvalue => .OBJ_UPVALUE,
+            ObjBoundMethod => .OBJ_BOUND_METHOD,
             else => @compileError("Unknown type"),
         };
         obj.obj.is_marked = false;
@@ -80,6 +81,7 @@ pub const Obj = struct {
             },
             .OBJ_CLASS => {
                 const klass = self.downcast(ObjClass);
+                klass.methods.free();
                 common.allocator.destroy(klass);
             },
             .OBJ_INSTANCE => {
@@ -87,7 +89,10 @@ pub const Obj = struct {
                 instance.fields.free();
                 common.allocator.destroy(instance);
             },
-            else => unreachable,
+            .OBJ_BOUND_METHOD => {
+                const method = self.downcast(ObjBoundMethod);
+                common.allocator.destroy(method);
+            },
         }
     }
 
@@ -122,9 +127,8 @@ pub const Obj = struct {
             .OBJ_INSTANCE => {
                 try writer.print("{s} instance", .{self.downcast(ObjInstance).klass.name.chars});
             },
-            else => {
-                std.debug.print("Unhandled type {}\n", .{self.type});
-                unreachable;
+            .OBJ_BOUND_METHOD => {
+                try writer.print("<fn {s}>", .{self.downcast(ObjBoundMethod).method.function.name.?.chars});
             },
         }
         if (newline) {
@@ -205,10 +209,12 @@ pub const ObjClosure = struct {
 pub const ObjClass = struct {
     obj: Obj,
     name: *ObjString,
+    methods: Table,
 
     pub fn allocate(name: *ObjString) *ObjClass {
         var klass = Obj.allocate(ObjClass);
         klass.name = name;
+        klass.methods.init();
         return klass;
     }
 };
@@ -223,6 +229,19 @@ pub const ObjInstance = struct {
         instance.fields.init();
         instance.klass = klass;
         return instance;
+    }
+};
+
+pub const ObjBoundMethod = struct {
+    obj: Obj,
+    receiver: Value,
+    method: *ObjClosure,
+
+    pub fn allocate(receiver: Value, method: *ObjClosure) *ObjBoundMethod {
+        var method_obj = Obj.allocate(ObjBoundMethod);
+        method_obj.receiver = receiver;
+        method_obj.method = method;
+        return method_obj;
     }
 };
 

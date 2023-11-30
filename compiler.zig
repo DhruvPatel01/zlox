@@ -54,8 +54,10 @@ pub const UpValue = struct {
     is_local: bool,
 };
 
-const FunctionType = enum(u1) {
+const FunctionType = enum(u2) {
     TYPE_FUNCTION,
+    TYPE_INITIALIZER,
+    TYPE_METHOD,
     TYPE_SCRIPT,
 };
 
@@ -83,13 +85,23 @@ const Compiler = struct {
         self.local_count += 1;
         local.depth = 0;
         local.is_captured = false;
-        local.name.lexeme = "";
+
+        if (typ != .TYPE_FUNCTION) {
+            local.name.lexeme = "this";
+        } else {
+            local.name.lexeme = "";
+        }
     }
+};
+
+const ClassCompiler = struct {
+    enclosing: ?*ClassCompiler,
 };
 
 var parser: Parser = undefined;
 var scanner: Scanner = undefined;
 var current: ?*Compiler = null;
+var current_class: ?*ClassCompiler = null;
 
 inline fn current_chunk() *Chunk {
     return &current.?.function.?.chunk;
@@ -151,6 +163,11 @@ inline fn emit_byte(byte: u8) void {
     current_chunk().write_byte(byte, parser.previous.line);
 }
 
+inline fn emit_pair(code: OpCode, byte: u8) void {
+    emit_op(code);
+    emit_byte(byte);
+}
+
 inline fn emitLoop(loop_start: usize) void {
     emit_op(.OP_LOOP);
 
@@ -176,7 +193,11 @@ inline fn emitJump(op: OpCode) usize {
 }
 
 inline fn emit_return() void {
-    emit_op(.OP_NIL);
+    if (current.?.function_type == .TYPE_INITIALIZER) {
+        emit_pair(.OP_GET_LOCAL, 0);
+    } else {
+        emit_op(.OP_NIL);
+    }
     emit_op(.OP_RETURN);
 }
 
@@ -312,11 +333,13 @@ fn dot(can_assign: bool) void {
 
     if (can_assign and match(.TOKEN_EQUAL)) {
         expression();
-        emit_op(.OP_SET_PROPERTY);
-        emit_byte(name);
+        emit_pair(.OP_SET_PROPERTY, name);
+    } else if (match(.TOKEN_LEFT_PAREN)) {
+        const arg_count = argumentList();
+        emit_pair(.OP_INVOKE, name);
+        emit_byte(arg_count);
     } else {
-        emit_op(.OP_GET_PROPERTY);
-        emit_byte(name);
+        emit_pair(.OP_GET_PROPERTY, name);
     }
 }
 
@@ -390,6 +413,14 @@ fn variable(can_assign: bool) void {
     namedVariable(parser.previous, can_assign);
 }
 
+fn this(_: bool) void {
+    if (current_class == null) {
+        error_("Can't use 'this' outside of a class.");
+        return;
+    }
+    variable(false);
+}
+
 fn unary(_: bool) void {
     const token_type = parser.previous.type;
 
@@ -439,7 +470,7 @@ fn make_rules() [@typeInfo(TokenType).Enum.fields.len]ParseRule {
     arr_[@intFromEnum(TokenType.TOKEN_PRINT)] = ParseRule{};
     arr_[@intFromEnum(TokenType.TOKEN_RETURN)] = ParseRule{};
     arr_[@intFromEnum(TokenType.TOKEN_SUPER)] = ParseRule{};
-    arr_[@intFromEnum(TokenType.TOKEN_THIS)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_THIS)] = ParseRule{ .prefix = this };
     arr_[@intFromEnum(TokenType.TOKEN_TRUE)] = ParseRule{ .prefix = literal };
     arr_[@intFromEnum(TokenType.TOKEN_VAR)] = ParseRule{};
     arr_[@intFromEnum(TokenType.TOKEN_WHILE)] = ParseRule{};
@@ -603,16 +634,39 @@ fn function(typ: FunctionType) void {
     }
 }
 
+fn method() void {
+    consume(.TOKEN_IDENTIFIER, "Expect method name.");
+    const constant = identifierConstant(&parser.previous);
+
+    var function_type: FunctionType = .TYPE_METHOD;
+    if (std.mem.eql(u8, "init", parser.previous.lexeme))
+        function_type = .TYPE_INITIALIZER;
+    function(function_type);
+    emit_pair(.OP_METHOD, constant);
+}
+
 fn classDeclaration() void {
     consume(.TOKEN_IDENTIFIER, "Expect class name.");
+    const class_name = parser.previous;
+
     const name_constant = identifierConstant(&parser.previous);
     declareVariable();
     emit_op(.OP_CLASS);
     emit_byte(name_constant);
     defineVariable(name_constant);
 
+    var class_compiler = ClassCompiler{ .enclosing = current_class };
+    current_class = &class_compiler;
+
+    namedVariable(class_name, false);
     consume(.TOKEN_LEFT_BRACE, "Expect '{' before class body.");
+    while (!check(.TOKEN_RIGHT_BRACE) and !check(.TOKEN_EOF)) {
+        method();
+    }
     consume(.TOKEN_RIGHT_BRACE, "Expect '}' after class body.");
+    emit_op(.OP_POP);
+
+    current_class = class_compiler.enclosing;
 }
 
 fn functionDeclaration() void {
@@ -712,6 +766,9 @@ fn returnStatement() void {
     if (match(.TOKEN_SEMICOLON)) {
         emit_return();
     } else {
+        if (current.?.function_type == .TYPE_INITIALIZER) {
+            error_("Can't return a value from an initializer.");
+        }
         expression();
         consume(.TOKEN_SEMICOLON, "Expect ';' after return value.");
         emit_op(.OP_RETURN);
