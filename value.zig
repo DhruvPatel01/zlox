@@ -61,11 +61,11 @@ pub const Value = union(enum) {
         };
     }
 
-    pub inline fn as(self: *Self, comptime T: type) *T {
+    pub inline fn as(self: *const Self, comptime T: type) *T {
         return self.Obj.downcast(T);
     }
 
-    pub inline fn is(self: *Self, typ: object.ObjType) bool {
+    pub inline fn is(self: *const Self, typ: object.ObjType) bool {
         return (self.* == .Obj and self.Obj.type == typ);
     }
 };

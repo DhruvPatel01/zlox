@@ -74,7 +74,7 @@ const Compiler = struct {
         self.enclosing = current;
         self.function_type = typ;
 
-        var func = object_.ObjFunction.allocate();
+        const func = object_.ObjFunction.allocate();
         self.function = func;
 
         current = self;
@@ -96,6 +96,7 @@ const Compiler = struct {
 
 const ClassCompiler = struct {
     enclosing: ?*ClassCompiler,
+    has_superclass: bool = false,
 };
 
 var parser: Parser = undefined;
@@ -413,6 +414,33 @@ fn variable(can_assign: bool) void {
     namedVariable(parser.previous, can_assign);
 }
 
+fn syntheticToken(comptime text: []const u8) Token {
+    return comptime Token{ .type = .TOKEN_NIL, .lexeme = text, .line = 0 };
+}
+
+fn super(_: bool) void {
+    if (current_class == null) {
+        error_("Can't use 'super' outside of a class.");
+    } else if (!current_class.?.has_superclass) {
+        error_("Can't use 'super' in a class with no superclass.");
+    }
+
+    consume(.TOKEN_DOT, "Expect '.' after 'super'.");
+    consume(.TOKEN_IDENTIFIER, "Expect superclass method name.");
+    const name = identifierConstant(&parser.previous);
+
+    namedVariable(syntheticToken("this"), false);
+    if (match(.TOKEN_LEFT_PAREN)) {
+        const arg_count = argumentList();
+        namedVariable(syntheticToken("super"), false);
+        emit_pair(.OP_SUPER_INVOKE, name);
+        emit_byte(arg_count);
+    } else {
+        namedVariable(syntheticToken("super"), false);
+        emit_pair(.OP_GET_SUPER, name);
+    }
+}
+
 fn this(_: bool) void {
     if (current_class == null) {
         error_("Can't use 'this' outside of a class.");
@@ -469,7 +497,7 @@ fn make_rules() [@typeInfo(TokenType).Enum.fields.len]ParseRule {
     arr_[@intFromEnum(TokenType.TOKEN_OR)] = ParseRule{ .infix = or_, .precedence = .PREC_OR };
     arr_[@intFromEnum(TokenType.TOKEN_PRINT)] = ParseRule{};
     arr_[@intFromEnum(TokenType.TOKEN_RETURN)] = ParseRule{};
-    arr_[@intFromEnum(TokenType.TOKEN_SUPER)] = ParseRule{};
+    arr_[@intFromEnum(TokenType.TOKEN_SUPER)] = ParseRule{ .prefix = super };
     arr_[@intFromEnum(TokenType.TOKEN_THIS)] = ParseRule{ .prefix = this };
     arr_[@intFromEnum(TokenType.TOKEN_TRUE)] = ParseRule{ .prefix = literal };
     arr_[@intFromEnum(TokenType.TOKEN_VAR)] = ParseRule{};
@@ -529,7 +557,7 @@ fn declareVariable() void {
     const name = &parser.previous;
     var i = @as(i32, current.?.local_count) - 1;
     while (i >= 0) : (i -= 1) {
-        var local = &current.?.locals[@intCast(i)];
+        const local = &current.?.locals[@intCast(i)];
         if (local.depth != -1 and local.depth < current.?.scope_depth) {
             break;
         }
@@ -655,8 +683,25 @@ fn classDeclaration() void {
     emit_byte(name_constant);
     defineVariable(name_constant);
 
-    var class_compiler = ClassCompiler{ .enclosing = current_class };
+    var class_compiler = ClassCompiler{ .enclosing = current_class, .has_superclass = false };
     current_class = &class_compiler;
+
+    if (match(.TOKEN_LESS)) {
+        consume(.TOKEN_IDENTIFIER, "Expect superclass name.");
+        variable(false);
+
+        if (std.mem.eql(u8, class_name.lexeme, parser.previous.lexeme)) {
+            error_("A class can't inherit from itself.");
+        }
+
+        beginScope();
+        addLocal(syntheticToken("super"));
+        defineVariable(0);
+
+        namedVariable(class_name, false);
+        emit_op(.OP_INHERIT);
+        class_compiler.has_superclass = true;
+    }
 
     namedVariable(class_name, false);
     consume(.TOKEN_LEFT_BRACE, "Expect '{' before class body.");
@@ -665,6 +710,10 @@ fn classDeclaration() void {
     }
     consume(.TOKEN_RIGHT_BRACE, "Expect '}' after class body.");
     emit_op(.OP_POP);
+
+    if (class_compiler.has_superclass) {
+        endScope();
+    }
 
     current_class = class_compiler.enclosing;
 }

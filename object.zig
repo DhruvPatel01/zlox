@@ -158,7 +158,7 @@ pub const ObjString = struct {
         if (interned != null) {
             return interned.?;
         }
-        var str = common.allocator.alloc(u8, chars.len) catch unreachable;
+        const str = common.allocator.alloc(u8, chars.len) catch unreachable;
         @memcpy(str, chars);
         return allocate(str, hash);
     }
@@ -196,7 +196,7 @@ pub const ObjClosure = struct {
     upvalue_count: u16,
 
     pub fn allocate(function: *ObjFunction) *ObjClosure {
-        var upvalues = common.allocator.alloc(?*ObjUpvalue, function.upvalue_count) catch unreachable;
+        const upvalues = common.allocator.alloc(?*ObjUpvalue, function.upvalue_count) catch unreachable;
         for (upvalues) |*upvalue| upvalue.* = null;
         var closure = Obj.allocate(ObjClosure);
         closure.function = function;

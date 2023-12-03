@@ -253,7 +253,7 @@ pub fn init() void {
 fn free_objects() void {
     var obj = vm.objects;
     while (obj != null) {
-        var next = obj.?.next;
+        const next = obj.?.next;
         obj.?.free_object();
         obj = next;
     }
@@ -316,7 +316,7 @@ fn run() InterpretError!void {
             const base = @intFromPtr(frame.closure.function.chunk.code.items.ptr);
             _ = frame.closure.function.chunk.disassemble_instruction(top - base);
         }
-        var instruction: OpCode = @enumFromInt(frame.read_byte());
+        const instruction: OpCode = @enumFromInt(frame.read_byte());
         switch (instruction) {
             .OP_CONSTANT => {
                 const constant = frame.read_constant();
@@ -396,7 +396,14 @@ fn run() InterpretError!void {
                     return error.RuntimeError;
                 }
             },
-            .OP_GET_SUPER => unreachable,
+            .OP_GET_SUPER => {
+                const name = frame.read_string();
+                const super_class = pop().as(object.ObjClass);
+
+                if (!bindMethod(super_class, name)) {
+                    return error.RuntimeError;
+                }
+            },
             .OP_EQUAL => {
                 const b = pop();
                 const a = pop();
@@ -483,7 +490,15 @@ fn run() InterpretError!void {
                 }
                 frame = &vm.frames[vm.frame_count - 1];
             },
-            .OP_SUPER_INVOKE => unreachable,
+            .OP_SUPER_INVOKE => {
+                const name = frame.read_string();
+                const argc = frame.read_byte();
+                const superclass = pop().as(object.ObjClass);
+                if (!invokeFromClass(superclass, name, argc)) {
+                    return error.RuntimeError;
+                }
+                frame = &vm.frames[vm.frame_count - 1];
+            },
             .OP_CLOSURE => {
                 const function = @fieldParentPtr(object.ObjFunction, "obj", frame.read_constant().Obj);
                 const closure = object.ObjClosure.allocate(function);
@@ -519,7 +534,17 @@ fn run() InterpretError!void {
             .OP_CLASS => {
                 push(Value{ .Obj = &object.ObjClass.allocate(frame.read_string()).obj });
             },
-            .OP_INHERIT => unreachable,
+            .OP_INHERIT => {
+                var superclass = peek(1);
+                if (!superclass.is(.OBJ_CLASS)) {
+                    runtimeError("Superclass must be a class.", .{});
+                    return error.RuntimeError;
+                }
+
+                var subclass = peek(0).as(object.ObjClass);
+                subclass.methods.add_all(&superclass.as(object.ObjClass).methods);
+                _ = pop(); //subclass
+            },
             .OP_METHOD => defineMethod(frame.read_string()),
         }
     }

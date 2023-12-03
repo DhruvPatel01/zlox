@@ -61,7 +61,7 @@ pub const Table = struct {
     }
 
     fn adjustCapacity(self: *Table, capacity: usize) void {
-        var entries = common.allocator.alloc(Entry, capacity) catch unreachable;
+        const entries = common.allocator.alloc(Entry, capacity) catch unreachable;
         for (entries) |*entry| {
             entry.key = null;
             entry.value = Value.Nil;
@@ -92,7 +92,7 @@ pub const Table = struct {
         }
 
         const entry = findEntry(self.entries, self.capacity, key);
-        var is_new_key = entry.key == null;
+        const is_new_key = entry.key == null;
         if (is_new_key and entry.value == Value.Nil) {
             self.count += 1;
         }
@@ -110,11 +110,11 @@ pub const Table = struct {
         return true;
     }
 
-    fn add_all(from: *Table, to: *Table) void {
+    pub fn add_all(to: *Table, from: *Table) void {
         for (0..from.capacity) |i| {
             const entry = &from.entries[i];
             if (entry.key != null)
-                to.set(entry.key, entry.value);
+                _ = to.set(entry.key.?, entry.value);
         }
     }
 

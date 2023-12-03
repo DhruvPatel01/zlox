@@ -143,7 +143,7 @@ pub const Chunk = struct {
             .OP_GET_UPVALUE => return self.byte_instruction("OP_GET_UPVALUE", offset),
             .OP_SET_PROPERTY => return self.constant_instruction("OP_SET_PROPERTY", offset),
             .OP_GET_PROPERTY => return self.constant_instruction("OP_GET_PROPERTY", offset),
-            .OP_GET_SUPER => unreachable,
+            .OP_GET_SUPER => return self.constant_instruction("OP_GET_SUPER", offset),
             .OP_EQUAL => return simple_instructoin("OP_EQUAL", offset),
             .OP_NOT_EQUAL => return simple_instructoin("OP_NOT_EQUAL", offset),
             .OP_GREATER => return simple_instructoin("OP_GREATER", offset),
@@ -164,7 +164,7 @@ pub const Chunk = struct {
             .OP_LOOP => return self.jump_instruction("OP_LOOP", -1, offset),
             .OP_CALL => return self.byte_instruction("OP_CALL", offset),
             .OP_INVOKE => return self.invokeInstruction("OP_INVOKE", offset),
-            .OP_SUPER_INVOKE => unreachable,
+            .OP_SUPER_INVOKE => return self.invokeInstruction("OP_SUPER_INVOKE", offset),
             .OP_CLOSURE => {
                 const constant = self.code.items[offset + 1];
                 print("{s:<16} {d:4} '", .{ "OP_CLOSURE", constant });
@@ -183,7 +183,7 @@ pub const Chunk = struct {
             .OP_CLOSE_UPVALUE => return simple_instructoin("OP_CLOSE_UPVALUE", offset),
             .OP_RETURN => return simple_instructoin("OP_RETURN", offset),
             .OP_CLASS => return self.constant_instruction("OP_CLASS", offset),
-            .OP_INHERIT => unreachable,
+            .OP_INHERIT => return simple_instructoin("OP_INHERIT", offset),
             .OP_METHOD => return self.constant_instruction("OP_METHOD", offset),
         }
     }
@@ -202,8 +202,8 @@ pub const Chunk = struct {
     }
 
     fn invokeInstruction(self: *const Self, name: []const u8, offset: usize) usize {
-        const constant = self.code[offset + 1];
-        const arg_count = self.code[offset + 2];
+        const constant = self.code.items[offset + 1];
+        const arg_count = self.code.items[offset + 2];
         print("{s:<16} ({d} args) {d:4} '", .{ name, arg_count, constant });
         self.values.items[constant].print(std.io.getStdErr().writer(), false);
         print("'\n", .{});
