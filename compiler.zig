@@ -360,7 +360,7 @@ fn grouping(_: bool) void {
 
 fn number(_: bool) void {
     const value = std.fmt.parseFloat(f64, parser.previous.lexeme) catch unreachable;
-    emit_constant(Value{ .Number = value });
+    emit_constant(Value.number(value));
 }
 
 fn or_(_: bool) void {
@@ -374,7 +374,7 @@ fn or_(_: bool) void {
 
 fn string(_: bool) void {
     const sub_obj = object_.ObjString.copy(parser.previous.lexeme[1 .. parser.previous.lexeme.len - 1]);
-    const constant = Value{ .Obj = &sub_obj.obj };
+    const constant = Value.obj(&sub_obj.obj);
     vm.push(constant);
     emit_constant(constant);
     _ = vm.pop();
@@ -536,7 +536,7 @@ fn parse_precedence(precedence: Precedence) void {
 }
 
 fn identifierConstant(name: *const Token) u8 {
-    return make_constant(Value{ .Obj = &object_.ObjString.copy(name.lexeme).obj });
+    return make_constant(Value.obj(&object_.ObjString.copy(name.lexeme).obj));
 }
 
 fn addLocal(name: Token) void {
@@ -651,7 +651,7 @@ fn function(typ: FunctionType) void {
     block();
 
     const func = end_compiler();
-    const constant = make_constant(Value{ .Obj = &func.obj }); // reachable by gc
+    const constant = make_constant(Value.obj(&func.obj)); // reachable by gc
     emit_op(.OP_CLOSURE);
     emit_byte(constant);
 

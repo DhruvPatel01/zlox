@@ -21,8 +21,8 @@ const CallFrame = struct {
     slots: [*]Value,
 
     inline fn read_byte(frame: *CallFrame) u8 {
-        defer frame.ip += 1;
-        return frame.ip[0];
+        frame.ip += 1;
+        return (frame.ip - 1)[0];
     }
 
     inline fn read_short(frame: *CallFrame) u16 {
@@ -35,7 +35,7 @@ const CallFrame = struct {
     }
 
     inline fn read_string(frame: *CallFrame) *object.ObjString {
-        return frame.read_constant().Obj.downcast(object.ObjString);
+        return frame.read_constant().as(object.ObjString);
     }
 };
 
@@ -78,19 +78,19 @@ fn runtimeError(comptime fmt: []const u8, args: anytype) void {
 }
 
 fn defineNative(name: []const u8, function: object.NativeFn) void {
-    push(Value{ .Obj = &object.ObjString.copy(name).obj });
-    push(Value{ .Obj = &object.ObjNative.allocate(function).obj });
-    _ = vm.globals.set(@fieldParentPtr(object.ObjString, "obj", peek(1).Obj), peek(0));
+    push(Value.obj(&object.ObjString.copy(name).obj));
+    push(Value.obj(&object.ObjNative.allocate(function).obj));
+    _ = vm.globals.set(@fieldParentPtr(object.ObjString, "obj", peek(1).as_obj()), peek(0));
     _ = pop();
     _ = pop();
 }
 
-pub fn push(value: Value) void {
+pub inline fn push(value: Value) void {
     vm.stack_top[0] = value;
     vm.stack_top += 1;
 }
 
-pub fn pop() Value {
+pub inline fn pop() Value {
     vm.stack_top -= 1;
     return vm.stack_top[0];
 }
@@ -99,12 +99,12 @@ fn popN(n: u8) void {
     vm.stack_top -= n;
 }
 
-fn peek(distance: usize) Value {
+inline fn peek(distance: usize) Value {
     const ptr = vm.stack_top - 1 - distance;
     return ptr[0];
 }
 
-fn call(closure: *object.ObjClosure, arg_count: u8) bool {
+inline fn call(closure: *object.ObjClosure, arg_count: u8) bool {
     if (closure.function.arity != arg_count) {
         runtimeError("Expected {} arguments but got {}.", .{ closure.function.arity, arg_count });
         return false;
@@ -123,21 +123,21 @@ fn call(closure: *object.ObjClosure, arg_count: u8) bool {
 }
 
 fn callValue(callee: Value, arg_count: u8) bool {
-    if (callee == .Obj) {
-        switch (callee.Obj.type) {
+    if (callee.is_obj()) {
+        switch (callee.as_obj().type) {
             .OBJ_BOUND_METHOD => {
-                const bound = callee.Obj.downcast(object.ObjBoundMethod);
+                const bound = callee.as(object.ObjBoundMethod);
                 var stack_position = vm.stack_top - arg_count - 1;
                 stack_position[0] = bound.receiver;
                 return call(bound.method, arg_count);
             },
             .OBJ_CLASS => {
-                const klass = callee.Obj.downcast(object.ObjClass);
+                const klass = callee.as(object.ObjClass);
                 var stack_position = vm.stack_top - arg_count - 1;
-                stack_position[0] = .{ .Obj = &object.ObjInstance.allocate(klass).obj };
+                stack_position[0] = Value.obj(&object.ObjInstance.allocate(klass).obj);
                 var initializer: Value = undefined;
                 if (klass.methods.get(vm.init_string.?, &initializer)) {
-                    return call(initializer.Obj.downcast(object.ObjClosure), arg_count);
+                    return call(initializer.as(object.ObjClosure), arg_count);
                 } else if (arg_count != 0) {
                     runtimeError("Expected 0 arguments but got {}.", .{arg_count});
                     return false;
@@ -145,10 +145,10 @@ fn callValue(callee: Value, arg_count: u8) bool {
                 return true;
             },
             .OBJ_CLOSURE => {
-                return call(callee.Obj.downcast(object.ObjClosure), arg_count);
+                return call(callee.as(object.ObjClosure), arg_count);
             },
             .OBJ_NATIVE => {
-                const func = callee.Obj.downcast(object.ObjNative).function;
+                const func = callee.as(object.ObjNative).function;
                 const result = func(arg_count, vm.stack_top - arg_count);
                 vm.stack_top -= (arg_count + 1);
                 push(result);
@@ -167,7 +167,7 @@ fn invokeFromClass(class: *object.ObjClass, name: *object.ObjString, arg_count: 
         runtimeError("Undefined property '{s}'.", .{name.chars});
         return false;
     }
-    return call(method.Obj.downcast(object.ObjClosure), arg_count);
+    return call(method.as(object.ObjClosure), arg_count);
 }
 
 fn invoke(name: *object.ObjString, arg_count: u8) bool {
@@ -193,9 +193,9 @@ fn bindMethod(klass: *object.ObjClass, name: *object.ObjString) bool {
         return false;
     }
 
-    const bound = object.ObjBoundMethod.allocate(peek(0), method.Obj.downcast(object.ObjClosure));
+    const bound = object.ObjBoundMethod.allocate(peek(0), method.as(object.ObjClosure));
     _ = pop();
-    push(.{ .Obj = &bound.obj });
+    push(Value.obj(&bound.obj));
     return true;
 }
 
@@ -232,7 +232,7 @@ fn closeUpvalues(last: [*]Value) void {
 
 fn defineMethod(name: *object.ObjString) void {
     const method = peek(0);
-    var klass = peek(1).Obj.downcast(object.ObjClass);
+    var klass = peek(1).as(object.ObjClass);
     _ = klass.methods.set(name, method);
     _ = pop();
 }
@@ -274,24 +274,24 @@ pub fn interpret(source: []const u8) InterpretError!void {
     if (function == null)
         return error.CompileError;
 
-    push(Value{ .Obj = &function.?.obj });
+    push(Value.obj(&function.?.obj));
     const closure = object.ObjClosure.allocate(function.?);
     _ = pop();
-    push(Value{ .Obj = &closure.obj });
+    push(Value.obj(&closure.obj));
     _ = call(closure, 0);
 
     return run();
 }
 
 fn concatenate() void {
-    const b = @fieldParentPtr(object.ObjString, "obj", peek(0).Obj);
-    const a = @fieldParentPtr(object.ObjString, "obj", peek(1).Obj);
+    const b = @fieldParentPtr(object.ObjString, "obj", peek(0).as_obj());
+    const a = @fieldParentPtr(object.ObjString, "obj", peek(1).as_obj());
 
     var final = common.allocator.alloc(u8, a.chars.len + b.chars.len) catch unreachable;
     @memcpy(final[0..a.chars.len], a.chars);
     @memcpy(final[a.chars.len..], b.chars);
 
-    const result = Value{ .Obj = &object.ObjString.take(final).obj };
+    const result = Value.obj(&object.ObjString.take(final).obj);
     popN(2);
     push(result);
 }
@@ -368,12 +368,12 @@ fn run() InterpretError!void {
             .OP_SET_PROPERTY => {
                 const obj = peek(1);
 
-                if (obj != .Obj or obj.Obj.type != .OBJ_INSTANCE) {
+                if (!obj.is(.OBJ_INSTANCE)) {
                     runtimeError("Only instances have fields.", .{});
                     return error.RuntimeError;
                 }
 
-                var instance = obj.Obj.downcast(object.ObjInstance);
+                var instance = obj.as(object.ObjInstance);
                 _ = instance.fields.set(frame.read_string(), peek(0));
                 const value = pop();
                 _ = pop();
@@ -381,12 +381,12 @@ fn run() InterpretError!void {
             },
             .OP_GET_PROPERTY => {
                 const obj = peek(0);
-                if (obj != .Obj or obj.Obj.type != .OBJ_INSTANCE) {
+                if (!obj.is(.OBJ_INSTANCE)) {
                     runtimeError("Only instances have properties.", .{});
                     return error.RuntimeError;
                 }
 
-                const instance = obj.Obj.downcast(object.ObjInstance);
+                const instance = obj.as(object.ObjInstance);
                 const name = frame.read_string();
                 var value: Value = undefined;
                 if (instance.fields.get(name, &value)) {
@@ -419,11 +419,11 @@ fn run() InterpretError!void {
             .OP_LESS => try binary_op(.OP_LESS),
             .OP_LESS_EQUAL => try binary_op(.OP_LESS_EQUAL),
             .OP_ADD => {
-                if (object.is_string(peek(0)) and object.is_string(peek(1))) {
+                if (peek(0).is(.OBJ_STRING) and peek(1).is(.OBJ_STRING)) {
                     concatenate();
-                } else if (peek(0) == Value.Number and peek(1) == Value.Number) {
-                    const b = pop().Number;
-                    const a = pop().Number;
+                } else if (peek(0).is_number() and peek(1).is_number()) {
+                    const b = pop().as_number();
+                    const a = pop().as_number();
                     push(Value.number(a + b));
                 } else {
                     runtimeError("Operands must be two numbers or two strings.", .{});
@@ -436,12 +436,11 @@ fn run() InterpretError!void {
             .OP_NOT => push(Value.boolean(pop().is_falsy())),
             .OP_NEGATE => {
                 const ptr = vm.stack_top - 1;
-                switch (ptr[0]) {
-                    .Number => ptr[0].Number = -ptr[0].Number,
-                    else => {
-                        runtimeError("Operand must be a number.", .{});
-                        return error.RuntimeError;
-                    },
+                if (ptr[0].is_number()) {
+                    ptr[0] = Value.number(-ptr[0].as_number());
+                } else {
+                    runtimeError("Operand must be a number.", .{});
+                    return error.RuntimeError;
                 }
             },
             .OP_PRINT => {
@@ -500,9 +499,9 @@ fn run() InterpretError!void {
                 frame = &vm.frames[vm.frame_count - 1];
             },
             .OP_CLOSURE => {
-                const function = @fieldParentPtr(object.ObjFunction, "obj", frame.read_constant().Obj);
+                const function = @fieldParentPtr(object.ObjFunction, "obj", frame.read_constant().as_obj());
                 const closure = object.ObjClosure.allocate(function);
-                push(Value{ .Obj = &closure.obj });
+                push(Value.obj(&closure.obj));
 
                 for (closure.upvalues) |*upvalue| {
                     const is_local = frame.read_byte();
@@ -532,7 +531,7 @@ fn run() InterpretError!void {
                 frame = &vm.frames[vm.frame_count - 1];
             },
             .OP_CLASS => {
-                push(Value{ .Obj = &object.ObjClass.allocate(frame.read_string()).obj });
+                push(Value.obj(&object.ObjClass.allocate(frame.read_string()).obj));
             },
             .OP_INHERIT => {
                 var superclass = peek(1);
@@ -551,12 +550,12 @@ fn run() InterpretError!void {
 }
 
 inline fn binary_op(comptime op: OpCode) InterpretError!void {
-    if (peek(0) != Value.Number or peek(1) != Value.Number) {
+    if (!peek(0).is_number() or !peek(1).is_number()) {
         runtimeError("Operands must be numbers.", .{});
         return error.RuntimeError;
     }
-    const b = pop().Number;
-    const a = pop().Number;
+    const b = pop().as_number();
+    const a = pop().as_number();
 
     const result = switch (op) {
         .OP_ADD => Value.number(a + b),
@@ -574,6 +573,11 @@ inline fn binary_op(comptime op: OpCode) InterpretError!void {
 
 pub var vm = VM{};
 
+inline fn toFloat(i: anytype) f64 {
+    return @floatFromInt(i);
+}
+
 fn clockNative(_: u8, _: [*]Value) Value {
-    return Value{ .Number = @floatFromInt(std.time.timestamp()) };
+    const ms: f64 = toFloat(std.time.milliTimestamp()) / toFloat(std.time.ms_per_s);
+    return Value.number(ms);
 }

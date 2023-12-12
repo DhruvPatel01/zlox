@@ -146,8 +146,8 @@ pub const ObjString = struct {
         var obj = Obj.allocate(ObjString);
         obj.chars = chars;
         obj.hash = hash;
-        VM.push(.{ .Obj = &obj.obj }); //garbage collection may be triggered next
-        _ = VM.vm.strings.set(obj, Value.Nil);
+        VM.push(Value.obj(&obj.obj)); //garbage collection may be triggered next
+        _ = VM.vm.strings.set(obj, Value.nil());
         _ = VM.pop();
         return obj;
     }
@@ -184,7 +184,7 @@ pub const ObjUpvalue = struct {
         var upvalue = Obj.allocate(ObjUpvalue);
         upvalue.location = value;
         upvalue.next = null;
-        upvalue.closed = Value.Nil;
+        upvalue.closed = Value.nil();
         return upvalue;
     }
 };
@@ -273,14 +273,6 @@ pub const ObjNative = struct {
         return obj;
     }
 };
-
-inline fn is_ObjType(value: Value, obj_type: ObjType) bool {
-    return value == Value.Obj and value.Obj.type == obj_type;
-}
-
-pub inline fn is_string(value: Value) bool {
-    return is_ObjType(value, .OBJ_STRING);
-}
 
 fn hash_string(key: []const u8) u32 {
     var hash: u32 = 2166136261;

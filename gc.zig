@@ -122,8 +122,8 @@ fn markTable(table: *table_.Table) void {
 }
 
 inline fn markValue(value: Value) void {
-    if (value == .Obj) {
-        markObject(value.Obj);
+    if (value.is_obj()) {
+        markObject(value.as_obj());
     }
 }
 

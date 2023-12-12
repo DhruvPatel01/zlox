@@ -15,11 +15,13 @@ pub const Table = struct {
     entries: [*]Entry,
     capacity: usize,
     count: usize,
+    load_capacity: usize,
 
     pub fn init(self: *Table) void {
         self.entries = undefined;
         self.count = 0;
         self.capacity = 0;
+        self.load_capacity = 0;
     }
 
     pub fn free(self: *Table) void {
@@ -28,12 +30,12 @@ pub const Table = struct {
     }
 
     fn findEntry(entries: [*]Entry, capacity: usize, key: *obj.ObjString) *Entry {
-        var index = key.hash % capacity;
+        var index = key.hash & (capacity - 1);
         var tombston: ?*Entry = null;
         while (true) {
             const entry = &entries[index];
             if (entry.key == null) {
-                if (entry.value == Value.Nil) {
+                if (entry.value.is_nil()) {
                     if (tombston == null) {
                         return entry;
                     } else {
@@ -47,7 +49,7 @@ pub const Table = struct {
             } else if (entry.key == key) {
                 return entry;
             }
-            index = (index + 1) % capacity;
+            index = (index + 1) & (capacity - 1);
         }
     }
 
@@ -64,7 +66,7 @@ pub const Table = struct {
         const entries = common.allocator.alloc(Entry, capacity) catch unreachable;
         for (entries) |*entry| {
             entry.key = null;
-            entry.value = Value.Nil;
+            entry.value = Value.nil();
         }
 
         self.count = 0;
@@ -83,17 +85,18 @@ pub const Table = struct {
         }
         self.entries = entries.ptr;
         self.capacity = capacity;
+        self.load_capacity = @intFromFloat(@as(f32, @floatFromInt(capacity)) * TABLE_MAX_LOAD);
     }
 
     pub fn set(self: *Table, key: *obj.ObjString, value: Value) bool {
-        if (@as(f64, @floatFromInt(self.count + 1)) > @as(f64, @floatFromInt(self.capacity)) * TABLE_MAX_LOAD) {
+        if (self.count + 1 > self.load_capacity) {
             const capacity = @max(8, self.capacity * 2);
             self.adjustCapacity(capacity);
         }
 
         const entry = findEntry(self.entries, self.capacity, key);
         const is_new_key = entry.key == null;
-        if (is_new_key and entry.value == Value.Nil) {
+        if (is_new_key and entry.value.is_nil()) {
             self.count += 1;
         }
         entry.key = key;
@@ -121,17 +124,17 @@ pub const Table = struct {
     pub fn findString(self: *Table, chars: []const u8, hash: u32) ?*obj.ObjString {
         if (self.count == 0) return null;
 
-        var index = hash % self.capacity;
+        var index = hash & (self.capacity - 1);
         while (true) {
             const entry = &self.entries[index];
             if (entry.key == null) {
-                if (entry.value == Value.Nil) {
+                if (entry.value.is_nil()) {
                     return null;
                 }
             } else if (chars.len == entry.key.?.chars.len and entry.key.?.hash == hash and std.mem.eql(u8, chars, entry.key.?.chars)) {
                 return entry.key;
             }
-            index = (index + 1) % self.capacity;
+            index = (index + 1) & (self.capacity - 1);
         }
     }
 
